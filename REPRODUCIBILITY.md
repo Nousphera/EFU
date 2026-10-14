@@ -13,7 +13,8 @@ versions is assumed.
 | Encrypted centroid expansion, Algorithms 1–2 | Coordinate-labelled expanded model | Deliberately different; kappa-ciphertext construction remains unresolved |
 | Sample/class unlearning, retained learning resumes | `train.py` | Explicit forget IDs; client either learns or unlearns; training resumes on retained IDs |
 | PGD, SGA-EWC, FedOSD comparisons | `utils/baselines.py` | Recovered local objective variants; not independently validated against original baseline papers |
-| FEMNIST, 30-identity LFW, two-head task forgetting | Not in maintained execution harness | Not reproduced; original source itself lacks full matching paths |
+| FEMNIST and LFW identity datasets | `dataset_io.py`, `femnist.py`, `train.py` | Maintained imports with explicit split/writer conventions; historical benchmark splits not recovered |
+| Two-head identity/gender task forgetting | Missing annotations, second head and task-specific training/evaluation in recovered source | Not implemented or reproduced |
 
 The paper uses Dir(0.1), 64 centroids, 1 learning/5 unlearning epochs, pretrained
 ResNet-18 and ViT-B/32, unlearning rounds 50–59, 10 clients at 20% participation
@@ -24,7 +25,7 @@ centralized key generation and different datasets/models; these were not silentl
 presented as the paper configuration. CIFAR image transforms here are resize and
 ToTensor; they are not claimed to reproduce all original augmentation details.
 
-`accuracy` is held-out synthetic/CIFAR accuracy. `forget_train_accuracy` evaluates
+`accuracy` is held-out accuracy on the selected dataset. `forget_train_accuracy` evaluates
 the explicitly forgotten training IDs, not forgotten-class test accuracy or an
 erasure guarantee. No privacy detector, membership-inference audit, task-wise
 forgetting result or counterfactual prediction-gap result has been reproduced.
@@ -90,11 +91,11 @@ not contain input records, weights, private keys or claims of benchmark parity.
 The default two-round synthetic test uses two clients, eight training samples per
 client, three classes, a 4-to-3 linear model, four K-means centroids, precision 2,
 CPU and one local epoch. No data/model download occurs on import, installation
-or test. `--download` is required to fetch CIFAR. `--pretrained` explicitly allows
+or test. `scripts/prepare_data.py --download` explicitly fetches CIFAR; `--source` imports acquired data. `--pretrained` explicitly allows
 weights to be fetched for supported EFU image models. No paper checkpoints or
 paper-result logs are included. No GPU run or full paper benchmark was executed.
 
-The shared CLI supports Dirichlet label partitioning for CIFAR, explicit
+The CLI supports Dirichlet label partitioning and optional FEMNIST writer partitions, explicit
 participation, local epochs, learning rate, seed, model, precision, public bound
 and output path. It rejects empty clients and cohorts with fewer than two active
 participants. A changed cohort gets a fresh decentralized setup. Setup cost is
@@ -105,3 +106,7 @@ included in the current simulator and is not comparable to the paper timings.
 The maintained CLI rejects an existing output JSON or sibling checkpoint before training. Final `.pt` files contain CPU state dictionaries, configuration and class count, loadable with `torch.load(path, weights_only=True, map_location="cpu")`. The JSON includes Python, platform, torch and NumPy versions. Save the dependency constraints and input-data version alongside the run. Encryption key generation remains random; seeded training does not imply deterministic ciphertext bytes.
 
 Partial-participation unlearning explicitly includes the requesting client in every scheduled request round and samples the remaining cohort uniformly. The metrics record `unlearning_client`; no request round is silently skipped because of ordinary client subsampling. This scheduler is a documented release choice, not a recovered original experiment schedule.
+
+## Dataset setup follow-up
+
+[DATASETS.md](DATASETS.md) defines the maintained preparation contract. Training now consumes `ROOT/DATASET` roots created by `scripts/prepare_data.py`; older direct CIFAR roots can be imported with `--source`. The preparation manifest identifies class maps, split sizes, label order and file hashes. Reports include its SHA256. Generated source-format fixtures exercise import, validation and actual training; their metrics are correctness diagnostics. No newly implemented ingestion path implies recovered historical splits or reproduced benchmark results.

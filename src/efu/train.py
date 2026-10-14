@@ -108,22 +108,28 @@ def load_data(args):
             for i in range(args.clients)
         ]
         return (train, test, indices, y.numpy(), 3)
-    from torchvision import datasets, transforms
+    from torchvision import transforms
+    from .dataset_io import load_prepared, prepare_dataset, labels
 
     size = 224 if args.model == "vit_b_32" else 32
     transform = transforms.Compose(
         [transforms.Resize((size, size)), transforms.ToTensor()]
     )
-    cls = datasets.CIFAR10 if args.dataset == "cifar10" else datasets.CIFAR100
-    train = cls(args.data_root, train=True, download=args.download, transform=transform)
-    test = cls(args.data_root, train=False, download=args.download, transform=transform)
-    return (
-        train,
-        test,
-        partition(train.targets, args.clients, args.alpha, args.seed),
-        np.asarray(train.targets),
-        len(train.classes),
-    )
+    if args.download:
+        prepare_dataset(args.dataset, args.data_root, download=True)
+    train, test, classes = load_prepared(args.dataset, args.data_root, transform)
+    targets = labels(train)
+    if getattr(args, "partition", "dirichlet") == "writer":
+        if args.dataset != "femnist":
+            raise ValueError("Writer partitioning is only defined for FEMNIST")
+        if args.clients != len(train.users):
+            raise ValueError(
+                f"Writer partitioning needs --clients {len(train.users)} (one per training writer)"
+            )
+        subsets = train.user_indices
+    else:
+        subsets = partition(targets, args.clients, args.alpha, args.seed)
+    return train, test, subsets, targets, classes
 
 
 def loader(dataset, indices, args, shuffle=True):
@@ -182,9 +188,12 @@ def select_participants(active, count, rng, required_client=None):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--dataset", choices=["synthetic", "cifar10", "cifar100"], default="synthetic"
+        "--dataset",
+        choices=["synthetic", "cifar10", "cifar100", "imagefolder", "femnist", "lfw"],
+        default="synthetic",
     )
     p.add_argument("--model", default="tiny")
+    p.add_argument("--partition", choices=["dirichlet", "writer"], default="dirichlet")
     p.add_argument(
         "--pretrained",
         action="store_true",
@@ -400,11 +409,16 @@ def main(argv=None):
         "partitions": partitions,
         "forget_indices": forget,
         "history": history,
-        "protocol": "decentralized-coordinate-fe"
-        if args.method == "efu"
-        else "plaintext-baseline",
+        "protocol": (
+            "decentralized-coordinate-fe"
+            if args.method == "efu"
+            else "plaintext-baseline"
+        ),
         "benchmark_reproduction": False,
     }
+    from .dataset_io import manifest_digest
+
+    result["data_manifest_sha256"] = manifest_digest(args.dataset, args.data_root)
     result["environment"] = {
         "python": platform.python_version(),
         "platform": platform.platform(),
