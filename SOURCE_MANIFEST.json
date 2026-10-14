@@ -37,7 +37,7 @@
     {
       "path": "src/efu/train.py",
       "source": "release-maintenance",
-      "released_sha256": "b609b5bc697f81a0a45e5abf269a1ea6210a36617d1abff09fd58068e7f18561"
+      "released_sha256": "a98fc1aea1723dca40164f954af5ef1260bb182d5a013f9306e9538c8b10a20d"
     },
     {
       "path": "src/efu/utils/__init__.py",

@@ -26,7 +26,7 @@ python -m pytest -q
 
 The default is a small, two-round CPU experiment with generated data. It trains
 real client models and performs real P-256 FE operations. The output JSON records
-configuration, partition indices and measured metrics. No dataset is downloaded.
+configuration, partition indices, environment versions and measured metrics. A sibling `.pt` file stores the final model state dictionary and configuration; existing JSON/checkpoint paths are protected. No dataset is downloaded.
 
 For options and a CIFAR experiment with the compact model:
 
@@ -38,7 +38,7 @@ efu-train --dataset cifar10 --download --model tiny --clients 2 \
 
 Use `--unlearn-start`, `--unlearn-rounds`, `--unlearn-epochs`,
 `--forget-client`, and either `--forget-fraction` or `--forget-class` to define a
-request. Offline attacks are prepared once and retained across unlearning rounds;
+request. During scheduled unlearning rounds, the requesting client is always included; remaining participants are sampled without replacement. This avoids silently skipping a request under partial participation. Offline attacks are prepared once and retained across unlearning rounds;
 `--attack-steps 100` selects the full recovered APGD iteration count. The small
 default uses 2 steps only for the smoke test. `--method fedavg` and `--method
 retrain` provide plaintext controls. `--unlearn-method pgd|sga_ewc|fedosd` selects

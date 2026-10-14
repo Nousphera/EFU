@@ -99,3 +99,9 @@ participation, local epochs, learning rate, seed, model, precision, public bound
 and output path. It rejects empty clients and cohorts with fewer than two active
 participants. A changed cohort gets a fresh decentralized setup. Setup cost is
 included in the current simulator and is not comparable to the paper timings.
+
+## Release artifact protection
+
+The maintained CLI rejects an existing output JSON or sibling checkpoint before training. Final `.pt` files contain CPU state dictionaries, configuration and class count, loadable with `torch.load(path, weights_only=True, map_location="cpu")`. The JSON includes Python, platform, torch and NumPy versions. Save the dependency constraints and input-data version alongside the run. Encryption key generation remains random; seeded training does not imply deterministic ciphertext bytes.
+
+Partial-participation unlearning explicitly includes the requesting client in every scheduled request round and samples the remaining cohort uniformly. The metrics record `unlearning_client`; no request round is silently skipped because of ordinary client subsampling. This scheduler is a documented release choice, not a recovered original experiment schedule.
