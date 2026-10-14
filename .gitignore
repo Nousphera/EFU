@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Reproducible research release artifacts
+.venv*/
+*.py[cod]
+data/
+datasets/
+assets/ckpts/
+runs/
+*.pth
+*.pt
+*.tar
+.DS_Store
+
+# Source directories in the vendored libraries must be tracked.
+!modules/mife/mife/data/
+!modules/mife/mife/data/**
+!modules/pyfilters/pyfilters/lib/
+!modules/pyfilters/pyfilters/lib/**

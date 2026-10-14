@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "efu-research"
+version = "0.1.0"
+description = "EFU reproducible research implementation with audited protocol boundaries"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = {file = "LICENSE"}
+dependencies = ["numpy>=1.26,<3", "torch>=2.5,<3", "torchvision>=0.20,<1", "scikit-learn>=1.5,<2", "torchmetrics>=1.5,<2", "pymife==0.0.14", "fastecdsa>=2.3,<4"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+dp = ["opacus>=1.5,<2", "transformers>=4.45,<5"]
+
+[project.scripts]
+efu-train = "efu.train:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.setuptools]
+license-files = ["LICENSE", "NOTICE", "licenses/*"]
+
+[tool.setuptools.package-data]
+efu = ["UPSTREAM-LICENSE"]

@@ -1,0 +1,3 @@
+include NOTICE PROVENANCE.md REPRODUCIBILITY.md SOURCE_MANIFEST.json constraints.txt
+recursive-include licenses *
+recursive-include src *LICENSE*

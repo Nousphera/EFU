@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mife"]
+
+[project.optional-dependencies]
+extragroup = [
+  "py_ecc >= 7.0.0",
+  "fastecdsa >= 2.3.0"
+]
+
+[project]
+name = "pymife"
+version = "0.0.14"
+authors = [
+  { name="mechfrog88", email="kelzzin2@gmail.com" },
+]
+dependencies = [
+    'pycryptodome >= 3.20.0',
+    'gmpy2 >= 2.1.5',
+    'numpy >= 1.26.4',
+]
+description = "Python Functional Encryption Library"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]

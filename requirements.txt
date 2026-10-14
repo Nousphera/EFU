@@ -1,0 +1,2 @@
+./modules/mife
+-e .[test]
