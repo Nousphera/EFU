@@ -192,3 +192,15 @@ def test_lfw_import_selects_declared_identities_and_preserves_split(tmp_path):
         ]
     )
     assert sum(map(len, report["partitions"])) == 12
+
+
+def test_preparation_rejects_image_with_valid_header_but_truncated_pixels(tmp_path):
+    source = fixture_images(tmp_path / "source")
+    image = source / "train/a/truncated.jpg"
+    Image.new("RGB", (40, 40), (20, 40, 80)).save(image)
+    image.write_bytes(image.read_bytes()[:-20])
+    with Image.open(image) as header:
+        header.verify()  # JPEG header verification alone accepts this file.
+    result = prepare(tmp_path / "data", "--source", source)
+    assert result.returncode != 0
+    assert not (tmp_path / "data/imagefolder").exists()

@@ -117,7 +117,7 @@ def describe(name, root, *, verify_images=False):
             hashes = set()
             for filename, _ in dataset.samples:
                 with Image.open(filename) as image:
-                    image.verify()
+                    image.load()
                 hashes.add(digest(filename))
             image_hashes.append(hashes)
     if len(image_hashes) == 2 and image_hashes[0] & image_hashes[1]:
