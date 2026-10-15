@@ -36,14 +36,14 @@ source .venv/bin/activate
 python -m pytest -q
 ```
 
-The setup script creates the venv, installs `requirements.txt` with the tested `constraints.txt`, and runs `pip check`. On macOS it selects the installed standalone Command Line Tools. Equivalent manual setup:
+The setup script creates the venv, installs `requirements.txt`, and runs `pip check`. On macOS it selects the installed standalone Command Line Tools. Equivalent manual setup:
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 # macOS with standalone Command Line Tools:
 # export DEVELOPER_DIR=/Library/Developer/CommandLineTools
-python -m pip install -c constraints.txt -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 Requirements install the vendored PyMIFE source and native cryptographic dependencies. Installation and tests do not download datasets or model weights. See [third-party licenses](THIRD_PARTY_LICENSES).
@@ -160,7 +160,7 @@ Weights are rounded after multiplication by `10**precision`. Decryption divides 
 
 EFU prepares targeted L2 APGD attacks, incorrect labels, inverted-MAS importance and reference weights once per request, then reuses them across its unlearning window. The local objective combines negative forget cross-entropy, adversarial cross-entropy and inverted-MAS drift penalty. BatchNorm integer counters use the maximum client value. See [task unlearning](TASK_UNLEARNING.md) for dual-head losses and scheduling.
 
-The bounded test suite exercises full paper architectures, image preparation, forward/backward passes, plaintext training and checkpoints. Separate small-array tests execute real P-256 encryption, weighted aggregation and malformed-message rejection. It does not encrypt an entire production backbone in CI and does not reproduce the paper benchmarks. Run `python -m pytest -q` and `python -m pip check`; tested dependency versions are in `constraints.txt`.
+The bounded test suite exercises full paper architectures, image preparation, forward/backward passes, plaintext training and checkpoints. Separate small-array tests execute real P-256 encryption, weighted aggregation and malformed-message rejection. It does not encrypt an entire production backbone in CI and does not reproduce the paper benchmarks. Run `python -m pytest -q` and `python -m pip check` after installation.
 
 ## Citation
 

@@ -16,6 +16,6 @@ elif [[ ! -f "$venv_dir/pyvenv.cfg" || ! -x "$venv_dir/bin/python" ]]; then
   exit 2
 fi
 "$venv_dir/bin/python" -m pip install --upgrade pip
-"$venv_dir/bin/python" -m pip install -c constraints.txt -r requirements.txt
+"$venv_dir/bin/python" -m pip install -r requirements.txt
 "$venv_dir/bin/python" -m pip check
 printf 'Environment ready. Activate with: source "%s/bin/activate"\n' "$venv_dir"
