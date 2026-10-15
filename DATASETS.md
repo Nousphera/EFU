@@ -46,7 +46,7 @@ Acquire and extract LFW images from the [dataset provider](https://vis-www.cs.um
 python scripts/prepare_data.py --dataset lfw --source /path/to/lfw --root data \
   --identities 30 --split-seed 2025 --test-fraction 0.2
 python scripts/prepare_data.py --dataset lfw --root data --validate
-efu-train --dataset lfw --data-root data --model tiny --clients 2 \
+efu-train --dataset lfw --data-root data --model resnet18 --pretrained --clients 2 \
   --alpha 10 --rounds 2 --precision 1 --output runs/lfw.json
 ```
 
@@ -62,7 +62,7 @@ Use the [LEAF FEMNIST preprocessing instructions](https://github.com/TalwalkarLa
 python scripts/prepare_data.py --dataset femnist \
   --source /path/to/leaf/data/femnist/data --root data
 python scripts/prepare_data.py --dataset femnist --root data --validate
-efu-train --dataset femnist --data-root data --model tiny --clients 2 \
+efu-train --dataset femnist --data-root data --model resnet18 --pretrained --clients 2 \
   --alpha 10 --rounds 2 --precision 1 --output runs/femnist.json
 ```
 

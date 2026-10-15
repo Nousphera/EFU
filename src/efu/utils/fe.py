@@ -41,7 +41,7 @@ def fe_secure_aggregate(dicts, num_samples, kappa=64, tag=b"efu", precision=3, m
     """Cluster then use coordinate-labelled decentralized FE.
 
     Each client expands centroids to d coordinates and sends d ciphertexts.
-    See REPRODUCIBILITY.md. BatchNorm buffers are aggregated in plaintext.
+    See README.md. BatchNorm buffers are aggregated in plaintext.
     """
     if len(dicts) != len(num_samples):
         raise ValueError("Each client must supply a sample count")

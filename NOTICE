@@ -1,7 +1,0 @@
-EFU research implementation
-
-Research source: Samaneh Mohammadi and the EFU authors.
-Source and license records: PROVENANCE.md and licenses/UPSTREAM-LICENSE.
-
-PyMIFE: Copyright (c) 2023 Tan Kel Zin, MIT; modules/mife/LICENSE.
-AutoAttack adaptation: Copyright (c) 2020 Francesco Croce, MIT; licenses/AUTOATTACK-LICENSE.

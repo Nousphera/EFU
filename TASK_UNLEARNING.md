@@ -4,7 +4,7 @@ The `--task identity-gender` route uses the task structure in
 [EFU §5.2 and Table 2](https://arxiv.org/html/2508.07873v1#S5.SS2): a shared backbone,
 two classification heads, joint initial learning, an all-client identity request,
 and simultaneous retained-task and unlearning objectives. It uses the same
-coordinate-labelled functional encryption described in [Implementation](REPRODUCIBILITY.md).
+coordinate-labelled functional encryption described in [Implementation](README.md#protocol).
 
 ## Supply annotations explicitly
 
@@ -38,17 +38,17 @@ The selected identities and seeded split follow [DATASETS.md](DATASETS.md).
 
 ## Execute
 
-Start with a small encrypted run on acquired, prepared data:
+Run the paper ViT-B/32 backbone on acquired, prepared data:
 
 ```bash
-efu-train --task identity-gender --dataset lfw --data-root data --model tiny \
+efu-train --task identity-gender --dataset lfw --data-root data --model vit_b_32 --pretrained \
   --clients 2 --alpha 10 --rounds 3 --unlearn-start 2 --unlearn-rounds 1 \
   --unlearn-epochs 1 --attack-steps 2 --precision 3 --kappa 16 --output runs/lfw-task-check.json
 ```
 
 This covers one round each of joint learning, identity unlearning and gender-only
-learning. For a completely offline execution check, omit the dataset/root flags;
-the default synthetic vectors have artificial binary labels and represent no
+learning. For an offline ResNet-18 control, omit the dataset/root and pretrained flags, select `--model resnet18 --aggregation plaintext`;
+the default generated images have artificial binary labels and represent no
 human subjects. `vit_b_32` provides the shared ViT-B/32 architecture, and
 `resnet18` is also supported. `--pretrained` explicitly downloads torchvision's
 ImageNet weights. Record the selected torchvision weights with the experiment.
@@ -102,7 +102,7 @@ annotation provenance, partitions, recipe and manifest hash. The matching `.pt`
 contains the shared backbone, both heads and class counts.
 
 Tests exercise generated annotated images through preparation and all three
-training phases with real FE, verify live gender gradients during identity
+training phases with full ResNet-18 and plaintext aggregation (real FE is tested separately on small arrays), verify live gender gradients during identity
 forgetting, fixed offline attacks, retained-only head routing, annotation changes,
 and actual unpretrained ResNet/ViT two-head forward passes. Per-head held-out
 metrics report identity forgetting and retained-task performance for each run.

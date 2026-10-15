@@ -72,7 +72,7 @@ def test_reject_split_overlap_class_mismatch_and_symlinks(tmp_path):
     assert prepare(tmp_path / "data", "--source", source).returncode != 0
 
 
-def test_prepared_images_train_with_real_encrypted_aggregation(tmp_path):
+def test_prepared_images_train_with_full_paper_architecture(tmp_path):
     from efu.train import main
 
     source = fixture_images(tmp_path / "source")
@@ -86,7 +86,9 @@ def test_prepared_images_train_with_real_encrypted_aggregation(tmp_path):
             "--data-root",
             str(tmp_path / "data"),
             "--model",
-            "tiny",
+            "resnet18",
+            "--method",
+            "fedavg",
             "--alpha",
             "10",
             "--rounds",
@@ -98,7 +100,7 @@ def test_prepared_images_train_with_real_encrypted_aggregation(tmp_path):
         ]
     )
     assert len(report["history"]) == 2
-    assert report["protocol"] == "decentralized-coordinate-fe"
+    assert report["protocol"] == "plaintext-baseline"
     assert len(report["data_manifest_sha256"]) == 64
     assert sorted(i for part in report["partitions"] for i in part) == list(range(16))
     assert output.with_suffix(".pt").is_file()

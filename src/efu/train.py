@@ -1,8 +1,8 @@
-# Modified 2026-10-15: standalone training integration; see PROVENANCE.md.
+# Modified 2026-10-15: standalone training integration; see THIRD_PARTY_LICENSES.
 """Local federated training with decentralized coordinate-labelled FE.
 
 Each client encrypts its expanded model vector, sending one ciphertext per
-coordinate. See REPRODUCIBILITY.md for the protocol and experiment settings.
+coordinate. See README.md for the protocol and experiment settings.
 """
 
 import argparse
@@ -17,28 +17,6 @@ import torch
 from torch.utils.data import DataLoader, Subset, TensorDataset
 
 PROJECT = "EFU"
-
-
-class Tiny(torch.nn.Module):
-    def __init__(self, classes=3, image=False):
-        super().__init__()
-        self.body = (
-            torch.nn.Sequential(
-                torch.nn.AdaptiveAvgPool2d((2, 2)),
-                torch.nn.Flatten(),
-                torch.nn.Linear(12, classes),
-            )
-            if image
-            else torch.nn.Linear(4, classes)
-        )
-        self.label2class = {i: i for i in range(classes)}
-
-    @property
-    def device(self):
-        return next(self.parameters()).device
-
-    def forward(self, x):
-        return self.body(x)
 
 
 class ImageModel(torch.nn.Module):
@@ -59,7 +37,7 @@ class ImageModel(torch.nn.Module):
                 self.body.heads.head.in_features, classes
             )
         else:
-            raise ValueError("Model must be tiny, resnet18 or vit_b_32")
+            raise ValueError("Model must be resnet18 or vit_b_32")
         self.input_mean = (0.485, 0.456, 0.406)
         self.input_std = (0.229, 0.224, 0.225)
         self.label2class = {i: i for i in range(classes)}
@@ -98,11 +76,11 @@ def partition(targets, clients, alpha, seed):
 def load_data(args):
     if args.dataset == "synthetic":
         generator = torch.Generator().manual_seed(args.seed)
-        x = torch.rand(args.clients * args.samples_per_client, 4, generator=generator)
-        y = x[:, :3].argmax(1).long()
+        x = torch.rand(args.clients * args.samples_per_client, 3, 224, 224, generator=generator)
+        y = x.mean(dim=(2, 3)).argmax(1).long()
         train = TensorDataset(x, y)
-        test_x = torch.rand(48, 4, generator=generator)
-        test = TensorDataset(test_x, test_x[:, :3].argmax(1))
+        test_x = torch.rand(4, 3, 224, 224, generator=generator)
+        test = TensorDataset(test_x, test_x.mean(dim=(2, 3)).argmax(1))
         indices = [
             list(range(i * args.samples_per_client, (i + 1) * args.samples_per_client))
             for i in range(args.clients)
@@ -111,7 +89,7 @@ def load_data(args):
     from torchvision import transforms
     from .dataset_io import load_prepared, prepare_dataset, labels
 
-    size = 224 if args.model == "vit_b_32" else 32
+    size = 224
     transform = transforms.Compose(
         [transforms.Resize((size, size)), transforms.ToTensor()]
     )
@@ -198,7 +176,7 @@ def main(argv=None):
         default="classification",
         help="identity-gender: system-wide LFW identity forgetting with retained supplied gender labels",
     )
-    p.add_argument("--model", default="tiny")
+    p.add_argument("--model", choices=['resnet18', 'vit_b_32'], default="resnet18")
     p.add_argument("--partition", choices=["dirichlet", "writer"], default="dirichlet")
     p.add_argument(
         "--pretrained",
@@ -225,6 +203,8 @@ def main(argv=None):
         default=None,
         help="Write configuration, partition indices and measured metrics as JSON",
     )
+    p.add_argument("--aggregation", choices=["encrypted", "plaintext"], default="encrypted",
+                   help="Plaintext isolates the unlearning objective for controls; provides no encryption")
     p.add_argument("--method", choices=["efu", "fedavg", "retrain"], default="efu")
     p.add_argument(
         "--unlearn-method", choices=["efu", "pgd", "sga_ewc", "fedosd"], default="efu"
@@ -269,8 +249,6 @@ def main(argv=None):
         or math.floor(args.clients * args.participation) < 2
     ):
         p.error("Participation must select at least two clients")
-    if args.dataset == "synthetic" and args.model != "tiny":
-        p.error("Synthetic features require --model tiny")
     if (
         not 0 <= args.forget_client < args.clients
         or not 0 < args.forget_fraction < 1
@@ -302,11 +280,7 @@ def main(argv=None):
     torch.manual_seed(args.seed)
     torch.set_num_threads(1)
     train, test, partitions, targets, classes = load_data(args)
-    model = (
-        Tiny(classes, args.dataset != "synthetic")
-        if args.model == "tiny"
-        else ImageModel(args.model, classes, args.pretrained)
-    ).to(args.device)
+    model = ImageModel(args.model, classes, args.pretrained).to(args.device)
     test_loader = DataLoader(test, batch_size=args.batch_size, num_workers=0)
     forget = []
     prepared = {}
@@ -409,7 +383,7 @@ def main(argv=None):
                 max_abs=args.max_abs,
                 seed=args.seed,
             )
-            if args.method == "efu"
+            if args.method == "efu" and args.aggregation == "encrypted"
             else fedavg_aggr(states, sizes, rnd=round_id)[0]
         )
         full = model.state_dict()
@@ -441,7 +415,7 @@ def main(argv=None):
         "history": history,
         "protocol": (
             "decentralized-coordinate-fe"
-            if args.method == "efu"
+            if args.method == "efu" and args.aggregation == "encrypted"
             else "plaintext-baseline"
         ),
         "benchmark_reproduction": False,

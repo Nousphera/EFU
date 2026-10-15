@@ -1,7 +1,7 @@
 """Coordinate-labelled decentralized FE using the upstream PyMIFE primitive.
 
 Each expanded clustered vector uses d ciphertexts for d model coordinates.
-See REPRODUCIBILITY.md for the protocol and numerical representation.
+See README.md for the protocol and numerical representation.
 Keys use OS entropy; the training seed never seeds cryptographic key generation.
 """
 from dataclasses import dataclass

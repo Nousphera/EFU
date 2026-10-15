@@ -18,30 +18,19 @@ from .task_data import IdentityGenderDataset, attach_task_labels
 
 
 class DualHeadModel(torch.nn.Module):
-    def __init__(self, name, identities, image=True, pretrained=False):
+    def __init__(self, name, identities, pretrained=False):
         super().__init__()
         if identities < 2:
             raise ValueError("At least two identity classes are required")
-        if name == "tiny":
-            dimension = 8
-            layers = (
-                [torch.nn.AdaptiveAvgPool2d((2, 2)), torch.nn.Flatten()]
-                if image
-                else []
-            )
-            self.backbone = torch.nn.Sequential(
-                *layers, torch.nn.Linear(12 if image else 4, dimension), torch.nn.ReLU()
-            )
-        else:
-            from .train import ImageModel
+        from .train import ImageModel
 
-            self.backbone = ImageModel(name, identities, pretrained)
-            if name == "resnet18":
-                dimension = self.backbone.body.fc.in_features
-                self.backbone.body.fc = torch.nn.Identity()
-            else:
-                dimension = self.backbone.body.heads.head.in_features
-                self.backbone.body.heads.head = torch.nn.Identity()
+        self.backbone = ImageModel(name, identities, pretrained)
+        if name == "resnet18":
+            dimension = self.backbone.body.fc.in_features
+            self.backbone.body.fc = torch.nn.Identity()
+        else:
+            dimension = self.backbone.body.heads.head.in_features
+            self.backbone.body.heads.head = torch.nn.Identity()
         self.identity_head = torch.nn.Linear(dimension, identities)
         self.gender_head = torch.nn.Linear(dimension, 2)
 
@@ -205,10 +194,10 @@ def run_task(args):
     torch.set_num_threads(1)
     train, test, partitions, _, classes = load_data(args)
     if args.dataset == "synthetic":
-        train = IdentityGenderDataset(train, (train.tensors[0][:, 3] > 0.5).long())
-        test = IdentityGenderDataset(test, (test.tensors[0][:, 3] > 0.5).long())
+        train = IdentityGenderDataset(train, (train.tensors[0][:, 0].mean(dim=(1, 2)) > 0.5).long())
+        test = IdentityGenderDataset(test, (test.tensors[0][:, 0].mean(dim=(1, 2)) > 0.5).long())
         annotation_metadata = {
-            "label_origin": "artificial binary labels on generated feature vectors; no human subjects",
+            "label_origin": "artificial binary labels on generated images; no human subjects",
             "gender_to_idx": {"synthetic_0": 0, "synthetic_1": 1},
         }
     else:
@@ -216,7 +205,7 @@ def run_task(args):
             train, test, args.data_root
         )
     model = DualHeadModel(
-        args.model, classes, args.dataset != "synthetic", args.pretrained
+        args.model, classes, args.pretrained
     ).to(args.device)
     test_loader = DataLoader(test, batch_size=args.batch_size)
     history, prepared = [], {}
@@ -273,7 +262,7 @@ def run_task(args):
                 max_abs=args.max_abs,
                 seed=args.seed,
             )
-            if args.method == "efu"
+            if args.method == "efu" and args.aggregation == "encrypted"
             else fedavg_aggr(states, sizes, rnd=round_id)[0]
         )
         full = model.state_dict()
@@ -304,7 +293,7 @@ def run_task(args):
         "history": history,
         "protocol": (
             "decentralized-coordinate-fe"
-            if args.method == "efu"
+            if args.method == "efu" and args.aggregation == "encrypted"
             else "plaintext-baseline"
         ),
         "benchmark_reproduction": False,

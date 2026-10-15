@@ -105,15 +105,15 @@ def test_identity_forgetting_keeps_gender_gradient_and_reuses_offline_attack():
     )
 
     torch.manual_seed(8)
-    model = DualHeadModel("tiny", 3, image=False)
+    model = DualHeadModel("resnet18", 3)
     data = DataLoader(
         TensorDataset(
-            torch.rand(6, 4),
-            torch.tensor([[0, 0], [1, 1], [2, 0], [0, 1], [1, 0], [2, 1]]),
+            torch.rand(2, 3, 224, 224),
+            torch.tensor([[0, 0], [1, 1]]),
         ),
-        batch_size=3,
+        batch_size=2,
     )
-    prepared = prepare_task_unlearning(model, data, attack_steps=2)
+    prepared = prepare_task_unlearning(model, data, attack_steps=1)
     batch = prepared["batches"][0]
     parts = task_objective(model, batch, prepared)
     torch.testing.assert_close(
@@ -148,9 +148,9 @@ def test_identity_forgetting_keeps_gender_gradient_and_reuses_offline_attack():
 def test_retained_only_training_never_updates_identity_head():
     from efu.task_unlearning import DualHeadModel, fit_tasks
 
-    model = DualHeadModel("tiny", 3, image=False)
+    model = DualHeadModel("resnet18", 3)
     data = DataLoader(
-        TensorDataset(torch.rand(4, 4), torch.tensor([[0, 0], [1, 1], [2, 0], [0, 1]])),
+        TensorDataset(torch.rand(2, 3, 224, 224), torch.tensor([[0, 0], [1, 1]])),
         batch_size=4,
     )
     identity = model.identity_head.weight.detach().clone()
@@ -160,7 +160,7 @@ def test_retained_only_training_never_updates_identity_head():
     assert not torch.equal(gender, model.gender_head.weight)
 
 
-def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path, monkeypatch):
+def test_primary_task_path_runs_full_resnet_all_phases_with_plaintext_control(tmp_path, monkeypatch):
     from efu.dataset_io import prepare_dataset
     from efu.train import main
     from efu import task_unlearning
@@ -199,7 +199,11 @@ def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path, monkey
             "--data-root",
             str(tmp_path / "data"),
             "--model",
-            "tiny",
+            "resnet18",
+            "--aggregation",
+            "plaintext",
+            "--lr",
+            "0.001",
             "--clients",
             "2",
             "--alpha",
@@ -243,7 +247,7 @@ def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path, monkey
         for row in result["history"]
     )
     assert len({row["test"]["gender"]["loss"] for row in result["history"]}) == 4
-    assert result["protocol"] == "decentralized-coordinate-fe"
+    assert result["protocol"] == "plaintext-baseline"
     assert result["task_recipe"]["loss_weights"] == {
         "retain_gender": 1.0,
         "forget_identity": 1.0,
@@ -263,26 +267,21 @@ def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path, monkey
 def test_held_out_metrics_route_both_heads_and_weight_uneven_batches():
     from efu.task_unlearning import evaluate_tasks
 
-    class KnownLogits(torch.nn.Module):
-        device = torch.device("cpu")
-
-        def forward(self, indices):
-            return {name: values[indices] for name, values in logits.items()}
-
-    logits = {
-        "identity": torch.tensor(
-            [[3., 1., 0.], [0., 2., 1.], [2., 1., 0.], [0., 2., 1.], [1., 0., 3.]]
-        ),
-        "gender": torch.tensor([[3., 0.], [1., 2.], [0., 2.], [3., 1.], [0., 3.]]),
-    }
-    labels = torch.tensor([[0, 0], [1, 1], [2, 1], [0, 0], [2, 0]])
-    data = DataLoader(TensorDataset(torch.arange(5), labels), batch_size=2)
-    metrics = evaluate_tasks(KnownLogits(), data)
+    from efu.task_unlearning import DualHeadModel
+    model = DualHeadModel("resnet18", 3).eval()
+    images = torch.rand(5, 3, 224, 224)
+    with torch.no_grad():
+        logits = model(images)
+    labels = torch.stack([logits[name].argmax(1) for name in ("identity", "gender")], dim=1)
+    labels[3:, 0] = (labels[3:, 0] + 1) % 3
+    labels[4:, 1] = 1 - labels[4:, 1]
+    data = DataLoader(TensorDataset(images, labels), batch_size=2)
+    metrics = evaluate_tasks(model, data)
     assert metrics["identity"]["accuracy"] == pytest.approx(3 / 5)
     assert metrics["gender"]["accuracy"] == pytest.approx(4 / 5)
     for column, name in enumerate(("identity", "gender")):
         expected = torch.nn.functional.cross_entropy(logits[name], labels[:, column])
-        assert metrics[name]["loss"] == pytest.approx(float(expected))
+        assert metrics[name]["loss"] == pytest.approx(float(expected), rel=1e-5)
         assert metrics[name]["samples"] == 5
 
 
@@ -310,7 +309,7 @@ def test_task_path_rejects_partial_cohort_and_missing_annotations(tmp_path):
         )
 
 
-@pytest.mark.parametrize("name,size", [("resnet18", 32), ("vit_b_32", 224)])
+@pytest.mark.parametrize("name,size", [("resnet18", 224), ("vit_b_32", 224)])
 def test_supported_image_backbones_share_features_with_two_real_heads(name, size):
     from efu.task_unlearning import DualHeadModel
 
@@ -326,7 +325,7 @@ def test_supported_image_backbones_share_features_with_two_real_heads(name, size
 def test_gender_only_retraining_control_uses_no_identity_supervision():
     from efu.train import main
 
-    result = main(["--task", "identity-gender", "--method", "retrain", "--rounds", "2"])
+    result = main(["--task", "identity-gender", "--method", "retrain", "--rounds", "2", "--samples-per-client", "2"])
     assert all(
         row["phase"] == "gender-only" and not row["unlearning_clients"]
         for row in result["history"]

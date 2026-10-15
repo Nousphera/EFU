@@ -46,7 +46,7 @@ source .venv/bin/activate
 python -m pip install -c constraints.txt -r requirements.txt
 ```
 
-Requirements install the vendored PyMIFE source and native cryptographic dependencies. Installation and tests do not download datasets or model weights. See [attribution and licenses](PROVENANCE.md).
+Requirements install the vendored PyMIFE source and native cryptographic dependencies. Installation and tests do not download datasets or model weights. See [third-party licenses](THIRD_PARTY_LICENSES).
 
 ## Data
 
@@ -73,29 +73,32 @@ For an explicit image dataset split, use `--dataset imagefolder --source /path/t
 
 ## Training
 
-A two-round offline check trains real client models and executes real P-256 functional encryption:
+A bounded offline check trains the full paper architecture on generated images with plaintext FedAvg:
 
 ```bash
-efu-train --output runs/smoke.json
+efu-train --method fedavg --samples-per-client 2 --rounds 1 --output runs/check.json
 ```
 
 Run the prepared CIFAR data through the same primary trainer:
 
 ```bash
-efu-train --dataset cifar10 --data-root data --model tiny \
-  --clients 2 --rounds 2 --alpha 10 --precision 1 --output runs/cifar10.json
+efu-train --dataset cifar10 --data-root data --model resnet18 --pretrained \
+  --clients 10 --participation 0.2 --rounds 100 --alpha 0.1 \
+  --batch-size 64 --lr 0.001 --kappa 64 --precision 3 \
+  --unlearn-start 51 --unlearn-rounds 10 --unlearn-epochs 5 --attack-steps 100 --output runs/cifar10.json
 efu-train --help
 ```
 
-`--method fedavg|retrain` provides plaintext controls. Define a request with `--forget-client`, `--forget-fraction` or `--forget-class`, `--unlearn-start`, `--unlearn-rounds` and `--unlearn-epochs`. Scheduled unlearning always includes the requester. `--attack-steps 100` uses 100 APGD iterations; the smoke-test default is 2. Models `resnet18` and `vit_b_32` support explicit `--pretrained` weight downloads. `--partition writer` preserves FEMNIST writers as clients and requires `--clients` to equal the manifest's training-writer count. The default is seeded Dirichlet label partitioning.
+`--method fedavg|retrain` provides plaintext controls. `--method efu --aggregation plaintext` isolates the same EFU unlearning objective and schedule without encryption; the default aggregation is encrypted. Define a request with `--forget-client`, `--forget-fraction` or `--forget-class`, `--unlearn-start`, `--unlearn-rounds` and `--unlearn-epochs`. Scheduled unlearning always includes the requester. `--attack-steps 100` uses 100 APGD iterations; the smoke-test default is 2. Models `resnet18` and `vit_b_32` support explicit `--pretrained` weight downloads. `--partition writer` preserves FEMNIST writers as clients and requires `--clients` to equal the manifest's training-writer count. The default is seeded Dirichlet label partitioning.
 
 For task-level unlearning, supply a per-image `path,gender` CSV during LFW preparation
 with `--gender-annotations`, then select the two-head route:
 
 ```bash
-efu-train --task identity-gender --dataset lfw --data-root data --model tiny \
-  --clients 2 --alpha 10 --rounds 3 --unlearn-start 2 --unlearn-rounds 1 \
-  --precision 3 --kappa 16 --output runs/lfw-task.json
+efu-train --task identity-gender --dataset lfw --data-root data --model vit_b_32 --pretrained \
+  --clients 30 --alpha 0.1 --rounds 100 --unlearn-start 51 --unlearn-rounds 10 \
+  --batch-size 64 --lr 0.001 --unlearn-epochs 5 --attack-steps 100 \
+  --precision 3 --kappa 64 --output runs/lfw-task.json
 ```
 
 All clients forget identity while retaining gender, then continue with gender-only
@@ -103,7 +106,7 @@ training. [TASK_UNLEARNING.md](TASK_UNLEARNING.md) specifies annotation coverage
 loss routing, controls, backbone choices and evaluation. No gender labels
 are inferred.
 
-The runner simulates clients and aggregation in one process. [Implementation and experiment settings](REPRODUCIBILITY.md) describe the protocol, numerical representation and evaluation metrics.
+The runner simulates clients and aggregation in one process. Synthetic images check execution only; their metrics are not benchmark results. Encrypted runs process every model coordinate and can be expensive.
 
 ## Evaluation
 
@@ -128,7 +131,7 @@ Each named run saves JSON containing configuration, data-manifest hash, exact cl
 
 ## Pretrained models
 
-`--model resnet18 --pretrained` and `--model vit_b_32 --pretrained` initialize the backbone with torchvision's ImageNet weights. Weight acquisition is explicit; the `tiny` model uses random initialization. Each training run writes its final model to the `.pt` checkpoint described above. [Task training](TASK_UNLEARNING.md#execute) documents backbone selection for the shared identity–gender model.
+`--model resnet18 --pretrained` and `--model vit_b_32 --pretrained` initialize the backbone with torchvision's ImageNet weights. Both are full torchvision architectures with 224×224 RGB inputs; omitting `--pretrained` trains the same architecture from scratch. The paper specifies Hugging Face ImageNet weights without an exact checkpoint identifier; torchvision weights are explicitly identified here and are not claimed to be the identical paper checkpoint. Each training run writes its final model to the `.pt` checkpoint described above. [Task training](TASK_UNLEARNING.md#execute) documents backbone selection for the shared identity–gender model.
 
 ## Results
 
@@ -148,7 +151,16 @@ EFU retains gender accuracy within 1.49 percentage points of full retraining, wi
 
 The implementation uses decentralized, coordinate-labelled functional encryption on P-256. Clients cluster weights, expand their local vector, and encrypt each coordinate with a unique session/round/position label. Each client sends **d ciphertexts for d model coordinates**; the paper's compressed transport uses κ encrypted centroids. These are different communication and encryption costs. Client secrets stay in client objects; the aggregation object holds public parameters and functional shares. BatchNorm buffers are aggregated in plaintext.
 
-All selected clients must contribute to a round. This local simulator uses in-process message delivery; network authentication, process isolation and dropout recovery require a separate deployment layer. [Protocol details](REPRODUCIBILITY.md) specify fixed-point precision, public bounds and aggregation checks.
+All selected clients must contribute to a round. This local simulator uses in-process message delivery; network authentication, process isolation and dropout recovery require a separate deployment layer.
+
+
+Public setup fixes the active cohort, positive integer sample counts, parameter layout, precision and absolute bound. Clients generate independent secrets, exchange pairwise public keys and generate functional shares; the server checks participant IDs, function weights, dimensions and labels. Each selected client must reply. Cryptographic keys use OS entropy independently of the training seed; a changed cohort receives fresh setup.
+
+Weights are rounded after multiplication by `10**precision`. Decryption divides the integer weighted sum by `sum(sample_counts) * 10**precision`; its rounding error is at most `0.5 / 10**precision` per coordinate relative to the reconstructed clustered mean. Nonfinite and out-of-bound weights fail. The public decryption interval is fixed at setup to `±ceil(max_abs * 10**precision + 0.5) * sum(sample_counts)`, and is reused only for that cohort/configuration. Larger bounds, precision and dimensions increase discrete-log work; clustering adds approximation error and coarse precision can erase updates.
+
+EFU prepares targeted L2 APGD attacks, incorrect labels, inverted-MAS importance and reference weights once per request, then reuses them across its unlearning window. The local objective combines negative forget cross-entropy, adversarial cross-entropy and inverted-MAS drift penalty. BatchNorm integer counters use the maximum client value. See [task unlearning](TASK_UNLEARNING.md) for dual-head losses and scheduling.
+
+The bounded test suite exercises full paper architectures, image preparation, forward/backward passes, plaintext training and checkpoints. Separate small-array tests execute real P-256 encryption, weighted aggregation and malformed-message rejection. It does not encrypt an entire production backbone in CI and does not reproduce the paper benchmarks. Run `python -m pytest -q` and `python -m pip check`; tested dependency versions are in `constraints.txt`.
 
 ## Citation
 
@@ -167,4 +179,4 @@ All selected clients must contribute to a round. This local simulator uses in-pr
 
 ## License and attribution
 
-See [LICENSE](LICENSE), [NOTICE](NOTICE), and [PROVENANCE.md](PROVENANCE.md) for the component licenses and source attribution. Third-party code retains its original notices.
+[LICENSE](LICENSE) covers the repository software. [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) preserves component attribution and complete third-party terms. Independently buildable vendored packages retain their own license files; dataset and pretrained-model access terms remain separate.
