@@ -49,6 +49,12 @@ def test_annotation_import_is_explicit_complete_and_integrity_checked(tmp_path):
     assert train[0][1].shape == (2,)
     assert len(train) == 12 and len(test) == 4
     assert metadata["annotation_sha256"]
+    for dataset in (train, test):
+        for index, (filename, identity) in enumerate(dataset.base.samples):
+            # The supplied fixture labels alternate by original filename;
+            # splitting and ImageFolder sorting must not realign annotations.
+            expected_gender = 0 if int(Path(filename).stem) % 2 else 1
+            assert dataset[index][1].tolist() == [identity, expected_gender]
     path = root / "lfw/tasks.json"
     path.write_text(
         path.read_text().replace('"schema_version": 1', '"schema_version": 2')
@@ -110,6 +116,12 @@ def test_identity_forgetting_keeps_gender_gradient_and_reuses_offline_attack():
     prepared = prepare_task_unlearning(model, data, attack_steps=2)
     batch = prepared["batches"][0]
     parts = task_objective(model, batch, prepared)
+    torch.testing.assert_close(
+        parts["forget"],
+        -torch.nn.functional.cross_entropy(
+            model(batch["image"])["identity"], batch["identity"]
+        ),
+    )
     g_expected = torch.autograd.grad(
         parts["retain"], model.gender_head.weight, retain_graph=True
     )[0]
@@ -148,9 +160,26 @@ def test_retained_only_training_never_updates_identity_head():
     assert not torch.equal(gender, model.gender_head.weight)
 
 
-def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path):
+def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path, monkeypatch):
     from efu.dataset_io import prepare_dataset
     from efu.train import main
+    from efu import task_unlearning
+
+    original_prepare = task_unlearning.prepare_task_unlearning
+    original_unlearn = task_unlearning.unlearn_task
+    caches, uses = [], []
+
+    def track_prepare(*args, **kwargs):
+        prepared = original_prepare(*args, **kwargs)
+        caches.append(prepared)
+        return prepared
+
+    def track_unlearn(model, prepared, *args, **kwargs):
+        uses.append(next(i for i, cached in enumerate(caches) if cached is prepared))
+        return original_unlearn(model, prepared, *args, **kwargs)
+
+    monkeypatch.setattr(task_unlearning, "prepare_task_unlearning", track_prepare)
+    monkeypatch.setattr(task_unlearning, "unlearn_task", track_unlearn)
 
     source, annotations = lfw_fixture(tmp_path)
     prepare_dataset(
@@ -176,11 +205,11 @@ def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path):
             "--alpha",
             "10",
             "--rounds",
-            "3",
+            "4",
             "--unlearn-start",
             "2",
             "--unlearn-rounds",
-            "1",
+            "2",
             "--attack-steps",
             "2",
             "--precision",
@@ -194,15 +223,26 @@ def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path):
     assert [row["phase"] for row in result["history"]] == [
         "joint-learning",
         "identity-unlearning",
+        "identity-unlearning",
         "gender-only",
     ]
-    assert result["history"][1]["unlearning_clients"] == [0, 1]
+    assert len(caches) == 2 and uses == [0, 1, 0, 1]
+    for row in result["history"]:
+        assert row["participants"] == [0, 1]
+        assert row["unlearning_clients"] == (
+            [0, 1] if row["phase"] == "identity-unlearning" else []
+        )
+        assert sum(row["sample_counts"]) == 12
+    assert all(
+        values["regularizer"] > 0
+        for values in result["history"][2]["local_objectives"].values()
+    )
     assert all(
         0 <= row["test"]["identity"]["accuracy"] <= 1
         and 0 <= row["test"]["gender"]["accuracy"] <= 1
         for row in result["history"]
     )
-    assert len({row["test"]["gender"]["loss"] for row in result["history"]}) == 3
+    assert len({row["test"]["gender"]["loss"] for row in result["history"]}) == 4
     assert result["protocol"] == "decentralized-coordinate-fe"
     assert result["task_recipe"]["loss_weights"] == {
         "retain_gender": 1.0,
@@ -218,6 +258,32 @@ def test_primary_task_path_runs_all_phases_with_real_encryption(tmp_path):
         and "gender_head.weight" in checkpoint["model"]
     )
     assert result["benchmark_reproduction"] is False
+
+
+def test_held_out_metrics_route_both_heads_and_weight_uneven_batches():
+    from efu.task_unlearning import evaluate_tasks
+
+    class KnownLogits(torch.nn.Module):
+        device = torch.device("cpu")
+
+        def forward(self, indices):
+            return {name: values[indices] for name, values in logits.items()}
+
+    logits = {
+        "identity": torch.tensor(
+            [[3., 1., 0.], [0., 2., 1.], [2., 1., 0.], [0., 2., 1.], [1., 0., 3.]]
+        ),
+        "gender": torch.tensor([[3., 0.], [1., 2.], [0., 2.], [3., 1.], [0., 3.]]),
+    }
+    labels = torch.tensor([[0, 0], [1, 1], [2, 1], [0, 0], [2, 0]])
+    data = DataLoader(TensorDataset(torch.arange(5), labels), batch_size=2)
+    metrics = evaluate_tasks(KnownLogits(), data)
+    assert metrics["identity"]["accuracy"] == pytest.approx(3 / 5)
+    assert metrics["gender"]["accuracy"] == pytest.approx(4 / 5)
+    for column, name in enumerate(("identity", "gender")):
+        expected = torch.nn.functional.cross_entropy(logits[name], labels[:, column])
+        assert metrics[name]["loss"] == pytest.approx(float(expected))
+        assert metrics[name]["samples"] == 5
 
 
 def test_task_path_rejects_partial_cohort_and_missing_annotations(tmp_path):
