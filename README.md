@@ -53,7 +53,7 @@ python scripts/prepare_data.py --dataset femnist --source /path/to/leaf/data/fem
 python scripts/prepare_data.py --dataset femnist --root data --validate
 ```
 
-LFW uses a documented, seeded identity-classification split; FEMNIST retains writer IDs and all 62 label indices. These imports feed the same learning/unlearning trainer. See [dataset acquisition and split conventions](DATASETS.md); the historical split and two-head identity/gender task-forgetting experiment are not reconstructed.
+LFW uses a documented, seeded identity-classification split; FEMNIST retains writer IDs and all 62 label indices. These imports feed the same learning/unlearning trainer. See [dataset acquisition and split conventions](DATASETS.md); historical splits are not recovered. The [two-head identity-forgetting/gender-retention route](TASK_UNLEARNING.md) is implemented with explicit supplied annotations and separately recorded recipe choices.
 
 For an explicit image dataset split, use `--dataset imagefolder --source /path/to/splits`, where the source contains `train/CLASS/*` and `test/CLASS/*`. Validation checks class agreement, readable images, exact duplicate image content across splits and file changes. [DATASETS.md](DATASETS.md) gives the complete layout and limits; `python scripts/prepare_data.py --help` lists all options.
 
@@ -74,6 +74,20 @@ efu-train --help
 ```
 
 `--method fedavg|retrain` provides plaintext controls. Define a request with `--forget-client`, `--forget-fraction` or `--forget-class`, `--unlearn-start`, `--unlearn-rounds` and `--unlearn-epochs`. Scheduled unlearning always includes the requester. `--attack-steps 100` selects the recovered APGD iteration count; the diagnostic default is 2. Models `resnet18` and `vit_b_32` support explicit `--pretrained` weight downloads. `--partition writer` preserves FEMNIST writers as clients and requires `--clients` to equal the manifest's training-writer count. The default is seeded Dirichlet label partitioning.
+
+For task-level unlearning, supply a per-image `path,gender` CSV during LFW preparation
+with `--gender-annotations`, then select the two-head route:
+
+```bash
+efu-train --task identity-gender --dataset lfw --data-root data --model tiny \
+  --clients 2 --alpha 10 --rounds 3 --unlearn-start 2 --unlearn-rounds 1 \
+  --precision 3 --kappa 16 --output runs/lfw-task.json
+```
+
+All clients forget identity while retaining gender, then continue with gender-only
+training. [TASK_UNLEARNING.md](TASK_UNLEARNING.md) specifies annotation coverage,
+loss routing, controls, backbone choices and reproduction limits. No gender labels
+are inferred.
 
 The maintained runner is a local federated simulation, with all parties in one process. Its input and aggregation paths are described in [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
 

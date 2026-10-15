@@ -14,7 +14,7 @@ versions is assumed.
 | Sample/class unlearning, retained learning resumes | `train.py` | Explicit forget IDs; client either learns or unlearns; training resumes on retained IDs |
 | PGD, SGA-EWC, FedOSD comparisons | `utils/baselines.py` | Recovered local objective variants; not independently validated against original baseline papers |
 | FEMNIST and LFW identity datasets | `dataset_io.py`, `femnist.py`, `train.py` | Maintained imports with explicit split/writer conventions; historical benchmark splits not recovered |
-| Two-head identity/gender task forgetting | Missing annotations, second head and task-specific training/evaluation in recovered source | Not implemented or reproduced |
+| Two-head identity/gender task forgetting | `task_data.py`, `task_unlearning.py`, `--task identity-gender` | Implemented with supplied annotations, dual heads, simultaneous objectives and separate evaluation; historical data/checkpoint and Table 2 results not reproduced |
 
 The paper uses Dir(0.1), 64 centroids, 1 learning/5 unlearning epochs, pretrained
 ResNet-18 and ViT-B/32, unlearning rounds 50–59, 10 clients at 20% participation
@@ -110,3 +110,20 @@ Partial-participation unlearning explicitly includes the requesting client in ev
 ## Dataset setup follow-up
 
 [DATASETS.md](DATASETS.md) defines the maintained preparation contract. Training now consumes `ROOT/DATASET` roots created by `scripts/prepare_data.py`; older direct CIFAR roots can be imported with `--source`. The preparation manifest identifies class maps, split sizes, label order and file hashes. Reports include its SHA256. Generated source-format fixtures exercise import, validation and actual training; their metrics are correctness diagnostics. No newly implemented ingestion path implies recovered historical splits or reproduced benchmark results.
+
+## Task-level route
+
+The recovered source did not contain a second head, gender annotations or task
+loss routing. The maintained extension implements the task structure stated in
+paper §5.2 using explicit per-image annotations, an all-client request, cached
+identity-only attacks/reference/importance, simultaneous gender CE plus identity
+Eq. (3), and gender-only learning after the request. All four objective weights
+are one, and Adam uses weight decay0.01. The identity MAS regularizer excludes
+the retained gender head; this scope and the inherited normalization are explicit
+maintained choices. Reports carry the exact task recipe and annotation provenance.
+
+See [TASK_UNLEARNING.md](TASK_UNLEARNING.md) for the one-based phase schedule,
+training controls, checkpoint differences, tested execution and remaining
+reproduction limits. Existing sample/class paths are unchanged. The shared
+ViT-B/32 or ResNet-18 and both heads use the same expanded-coordinate encryption
+contract; this extension adds no privacy proof or compressed-cost claim.

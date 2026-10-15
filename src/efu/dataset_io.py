@@ -137,6 +137,10 @@ def validate_dataset(name, root):
     actual = describe(name, directory, verify_images=True)
     if any(actual[key] != manifest[key] for key in actual):
         raise ValueError("Dataset labels or split sizes differ from manifest")
+    if "tasks" in manifest:
+        from .task_data import load_task_annotations
+
+        load_task_annotations(directory, manifest)
     return manifest
 
 
@@ -200,7 +204,10 @@ def prepare_dataset(
     identities=30,
     split_seed=2025,
     test_fraction=0.2,
+    gender_annotations=None,
 ):
+    if gender_annotations is not None and name != "lfw":
+        raise ValueError("Gender annotations are only supported for LFW")
     if name not in DATASETS:
         raise ValueError(f"Unsupported dataset: {name}")
     parent = Path(root)
@@ -243,6 +250,13 @@ def prepare_dataset(
                 )
             stage.mkdir()
             open_dataset(name, stage, download=True)
+        task_metadata = None
+        if gender_annotations is not None:
+            from .task_data import prepare_gender_annotations
+
+            task_metadata = prepare_gender_annotations(
+                source, stage, gender_annotations
+            )
         manifest = {
             "schema_version": 1,
             "dataset": name,
@@ -251,6 +265,8 @@ def prepare_dataset(
             **describe(name, stage, verify_images=True),
             "files": inventory(stage),
         }
+        if task_metadata is not None:
+            manifest["tasks"] = task_metadata
         (stage / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         )
@@ -321,9 +337,18 @@ def main(argv=None):
             default=30,
             help="LFW: most populous identities, alphabetic tie break",
         )
+        parser.add_argument(
+            "--gender-annotations",
+            type=Path,
+            help="LFW only: explicit CSV with path,gender for every selected image",
+        )
         parser.add_argument("--split-seed", type=int, default=2025)
         parser.add_argument("--test-fraction", type=float, default=0.2)
     args = parser.parse_args(argv)
+    if args.validate and getattr(args, "gender_annotations", None) is not None:
+        parser.error(
+            "--validate checks saved annotations; use a new output root to import annotations"
+        )
     try:
         if args.validate:
             result = validate_dataset(args.dataset, args.root)
@@ -336,6 +361,7 @@ def main(argv=None):
                 identities=getattr(args, "identities", 30),
                 split_seed=getattr(args, "split_seed", 2025),
                 test_fraction=getattr(args, "test_fraction", 0.2),
+                gender_annotations=getattr(args, "gender_annotations", None),
             )
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         parser.exit(2, f"Dataset preparation failed: {exc}\n")

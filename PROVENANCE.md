@@ -34,3 +34,14 @@ The original MIT notice (copyright 2020 Francesco Croce) is included as
 ## Dataset/setup follow-up (2026-10-15)
 
 The maintained release adds `scripts/setup.sh`, `scripts/prepare_data.py`, namespaced dataset preparation/validation, manifests and generated-source integration tests. These modules are new integration code rather than recovered historical experiment scripts. Official dataset loading remains delegated to torchvision; fixed-split imports remain user-supplied. See `DATASETS.md` for split conventions and `REPRODUCIBILITY.md` for method/benchmark limits.
+
+## Task-unlearning extension (2026-10-15)
+
+`task_data.py`, `task_unlearning.py` and the `--task identity-gender` route are new
+maintained integration code grounded in arXiv:2508.07873v1 §5.2/Table2 and Eq.(3).
+They add explicit annotation import, a shared backbone with two heads, all-client
+phase routing and separate held-out metrics. Existing APGD, inverted MAS and
+coordinate FE are reused. No original gender labels or Table2 checkpoint were
+recovered; annotations must be supplied by the experimenter. Unit task-loss
+weights, identity-only regularizer scope, phase indexing and checkpoint-provider
+differences are recorded in TASK_UNLEARNING.md and saved run metadata.

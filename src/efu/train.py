@@ -192,6 +192,12 @@ def main(argv=None):
         choices=["synthetic", "cifar10", "cifar100", "imagefolder", "femnist", "lfw"],
         default="synthetic",
     )
+    p.add_argument(
+        "--task",
+        choices=["classification", "identity-gender"],
+        default="classification",
+        help="identity-gender: system-wide LFW identity forgetting with retained supplied gender labels",
+    )
     p.add_argument("--model", default="tiny")
     p.add_argument("--partition", choices=["dirichlet", "writer"], default="dirichlet")
     p.add_argument(
@@ -226,8 +232,18 @@ def main(argv=None):
     p.add_argument("--unlearn-start", type=int, default=2)
     p.add_argument("--unlearn-rounds", type=int, default=1)
     p.add_argument("--unlearn-epochs", type=int, default=1)
-    p.add_argument("--forget-client", type=int, default=0)
-    p.add_argument("--forget-fraction", type=float, default=0.25)
+    p.add_argument(
+        "--forget-client",
+        type=int,
+        default=0,
+        help="Single-task classification requester; task-level requests use all clients",
+    )
+    p.add_argument(
+        "--forget-fraction",
+        type=float,
+        default=0.25,
+        help="Single-task sample forgetting fraction",
+    )
     p.add_argument("--forget-class", type=int, default=None)
     p.add_argument("--attack-steps", type=int, default=2)
     args = p.parse_args(argv)
@@ -267,6 +283,20 @@ def main(argv=None):
         < 1
     ):
         p.error("Invalid forget-client or forget-fraction")
+    if args.task == "identity-gender":
+        if args.dataset not in ("lfw", "synthetic"):
+            p.error(
+                "identity-gender requires prepared LFW or explicit synthetic diagnostics"
+            )
+        if args.participation != 1.0:
+            p.error("The system-wide identity-gender request requires participation=1")
+        if args.unlearn_method != "efu" or args.forget_class is not None:
+            p.error(
+                "identity-gender implements EFU Eq. (3), not the single-task baseline or class-selection options"
+            )
+        from .task_unlearning import run_task
+
+        return run_task(args)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
