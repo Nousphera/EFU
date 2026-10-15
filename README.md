@@ -2,17 +2,29 @@
 
 **EFU: Enforcing Federated Unlearning via Functional Encryption**
 
-[<img src="docs/assets/icons/paper.svg" width="16" height="16" alt=""> Paper](https://doi.org/10.1145/3746252.3761091) · [<img src="docs/assets/icons/project.svg" width="16" height="16" alt=""> Project](https://nousphera.github.io/EFU/) · [<img src="docs/assets/icons/code.svg" width="16" height="16" alt=""> Code](https://github.com/Nousphera/EFU) · [Citation](CITATION.cff)
+[<img src="docs/assets/icons/paper.svg" width="16" height="16" alt=""> Paper](https://doi.org/10.1145/3746252.3761091) · [<img src="docs/assets/icons/project.svg" width="16" height="16" alt=""> Project](https://nousphera.github.io/projects/efu/) · [<img src="docs/assets/icons/code.svg" width="16" height="16" alt=""> Code](https://github.com/Nousphera/EFU) · [<img src="docs/assets/icons/paper.svg" width="16" height="16" alt=""> Preprint](https://arxiv.org/abs/2508.07873) · [<img src="docs/assets/icons/paper.svg" width="16" height="16" alt=""> Poster](https://nousphera.github.io/assets/posters/efu-a0-landscape.pdf) · [Citation](CITATION.cff)
 
 Samaneh Mohammadi · Vasileios Tsouvalas · Iraklis Symeonidis · Ali Balador · Tanir Ozcelebi · Francesco Flammini · Nirvana Meratnia
 
 ACM CIKM 2025
 
+<p align="center">
+  <a href="https://nousphera.github.io/projects/efu/#findings">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-light.svg">
+      <img src="docs/assets/readme/results-light.svg" width="920" alt="Paper results on LFW with ViT-B/32: EFU retains 95.37% gender accuracy and reaches 5.12% identity accuracy; full retraining gives 96.86% and 4.71%.">
+    </picture>
+  </a>
+</p>
+
+*Paper results: identity forgetting with gender retention on LFW, ViT-B/32; 30 clients, full participation, 100 rounds. [Table 2](https://arxiv.org/pdf/2508.07873v1#page=10), means of three runs. Explore the [interactive findings](https://nousphera.github.io/projects/efu/#findings).*
+
 ## Abstract
 
 Federated unlearning (FU) algorithms allow clients in federated settings to exercise their “right to be forgotten” by removing the influence of their data from a collaboratively trained model. Existing FU methods maintain data privacy by performing unlearning locally on the client-side and sending targeted updates to the server without exposing forgotten data; yet they often rely on server-side cooperation, revealing the client's intent and identity without enforcement guarantees - compromising autonomy and unlearning privacy. In this work, we propose EFU (Enforced Federated Unlearning), a cryptographically enforced FU framework that enables clients to initiate unlearning while concealing its occurrence from the server. Specifically, EFU leverages functional encryption to bind encrypted updates to specific aggregation functions, ensuring the server can neither perform unauthorized computations nor detect or skip unlearning requests. To further mask behavioral and parameter shifts in the aggregated model, we incorporate auxiliary unlearning losses based on adversarial examples and parameter importance regularization. Extensive experiments show that EFU achieves near-random accuracy on forgotten data while maintaining performance comparable to full retraining across datasets and neural architectures - all while concealing unlearning intent from the server. Furthermore, we demonstrate that EFU is agnostic to the underlying unlearning algorithm, enabling secure, function-hiding, and verifiable unlearning for any client-side FU mechanism that issues targeted updates.
 
-## Setup
+## Installation
 
 Python 3.12 is tested; package metadata permits 3.11–3.13. Use a dedicated virtual environment. Linux needs a C/C++ toolchain, Python development headers, GMP and libffi development libraries (for example, `build-essential python3-dev libgmp-dev libffi-dev` on Debian/Ubuntu). macOS needs Python 3.12 and the standalone Command Line Tools; install GMP/libffi if native cryptographic wheels are unavailable. On Windows, use WSL2 with the Linux prerequisites; native Windows is untested.
 
@@ -36,7 +48,7 @@ python -m pip install -c constraints.txt -r requirements.txt
 
 Requirements install the vendored PyMIFE source and native cryptographic dependencies. Installation and tests do not download datasets or model weights. See [attribution and licenses](PROVENANCE.md).
 
-## Datasets
+## Data
 
 Prepare once, validate, and pass the same parent root to training:
 
@@ -59,7 +71,7 @@ LFW uses a documented, seeded identity-classification split; FEMNIST retains wri
 
 For an explicit image dataset split, use `--dataset imagefolder --source /path/to/splits`, where the source contains `train/CLASS/*` and `test/CLASS/*`. Validation checks class agreement, readable images, exact duplicate image content across splits and file changes. [DATASETS.md](DATASETS.md) gives the complete layout and limits; `python scripts/prepare_data.py --help` lists all options.
 
-## Run
+## Training
 
 A two-round offline check trains real client models and executes real P-256 functional encryption:
 
@@ -93,9 +105,44 @@ are inferred.
 
 The runner simulates clients and aggregation in one process. [Implementation and experiment settings](REPRODUCIBILITY.md) describe the protocol, numerical representation and evaluation metrics.
 
-## Outputs
+## Evaluation
+
+The trainer evaluates the held-out test split after every round and writes `accuracy` and cross-entropy `loss` to `history`. Single-task unlearning also records `forget_train_accuracy` on the requested training subset. The identity–gender route records separate held-out identity and gender metrics under each round's `test` field; see [task evaluation](TASK_UNLEARNING.md#outputs-and-validation).
+
+Inspect the final evaluation from a run above:
+
+```bash
+python - <<'PYTHON'
+import json
+from pathlib import Path
+report = json.loads(Path("runs/cifar10.json").read_text())
+print(json.dumps(report["history"][-1], indent=2))
+PYTHON
+```
+
+Accuracy values in run reports are fractions in `[0, 1]`. Retained and forgotten accuracies in the paper's class-wise tables use separate test subsets; `forget_train_accuracy` is a training-subset measurement.
+
+### Saved outputs
 
 Each named run saves JSON containing configuration, data-manifest hash, exact client partitions, participant/sample counts, metrics and environment versions. A sibling `.pt` stores the final CPU state dictionary and configuration, loadable with `torch.load(..., weights_only=True)`. Existing JSON/checkpoint paths are protected; choose a new output name to rerun. Save the input manifest and run `--validate` before a research experiment; training checks label/split identity, while full file hashing is an explicit preparation check.
+
+## Pretrained models
+
+`--model resnet18 --pretrained` and `--model vit_b_32 --pretrained` initialize the backbone with torchvision's ImageNet weights. Weight acquisition is explicit; the `tiny` model uses random initialization. Each training run writes its final model to the `.pt` checkpoint described above. [Task training](TASK_UNLEARNING.md#execute) documents backbone selection for the shared identity–gender model.
+
+## Results
+
+The paper reports the following LFW task-unlearning results with ViT-B/32: all 30 clients remove identity classification after 50 joint-training rounds while retaining gender classification; 100 rounds in total, full participation. Values are mean test accuracies over three runs, from [Table 2](https://arxiv.org/pdf/2508.07873v1#page=10).
+
+| Method | Gender accuracy ↑ (%) | Identity accuracy ↓ (%) |
+|---|---:|---:|
+| Full retrain | 96.86 | 4.71 |
+| SGA-EWC | 93.54 | 19.47 |
+| PGD | 94.81 | 10.32 |
+| FedOSD | 95.02 | 5.01 |
+| **EFU** | **95.37** | **5.12** |
+
+EFU retains gender accuracy within 1.49 percentage points of full retraining, with identity accuracy close to the retraining reference. For CIFAR-10 class-wise forgetting with ResNet-18, [Table 1(a)](https://arxiv.org/pdf/2508.07873v1#page=9) reports 92.43% retained and 13.06% forgotten accuracy for EFU, versus 94.82% and 13.72% for retraining. See the [project findings](https://nousphera.github.io/projects/efu/#findings) for the experiment settings and comparisons.
 
 ## Protocol
 

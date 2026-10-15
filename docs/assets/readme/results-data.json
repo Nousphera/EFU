@@ -1,0 +1,51 @@
+{
+  "title": "Remove identity, retain gender",
+  "context": "LFW, ViT-B/32 with separate identity and gender heads; all 30 clients unlearn identity after round 50 of 100, with full participation. Test accuracy in %; higher gender and lower identity are desired. Means of 3 runs; no dispersion reported.",
+  "source": {
+    "label": "Table 2 \u00b7 PDF page 10",
+    "url": "https://arxiv.org/pdf/2508.07873v1#page=10"
+  },
+  "columns": [
+    "Method",
+    "Gender accuracy (%)",
+    "Identity accuracy (%)"
+  ],
+  "rows": [
+    {
+      "label": "Full retrain",
+      "values": [
+        "96.86",
+        "4.71"
+      ]
+    },
+    {
+      "label": "SGA-EWC",
+      "values": [
+        "93.54",
+        "19.47"
+      ]
+    },
+    {
+      "label": "PGD",
+      "values": [
+        "94.81",
+        "10.32"
+      ]
+    },
+    {
+      "label": "FedOSD",
+      "values": [
+        "95.02",
+        "5.01"
+      ]
+    },
+    {
+      "label": "EFU",
+      "values": [
+        "95.37",
+        "5.12"
+      ],
+      "highlight": true
+    }
+  ]
+}
