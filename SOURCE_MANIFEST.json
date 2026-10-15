@@ -9,7 +9,7 @@
     {
       "path": "src/efu/__init__.py",
       "source": "release-maintenance",
-      "released_sha256": "29861181ee45405f5db30ffa4dbffd6a86e4ef99a39f08873c2c1cc8841c6ef0"
+      "released_sha256": "58d0815a592857434f46b36e2d0b4fe546c3c95553e1f60691ce66ba9f8a0382"
     },
     {
       "path": "src/efu/aggregate.py",
@@ -17,7 +17,7 @@
       "source_commit": "e8837be2eed617d9d18c9222ebd7aa3480a264b4",
       "source_path": "src/aggregate.py",
       "source_sha256": "da558b96cca33a6cc091f1af26a3f5c39f39cab5ced9729b0a47e6e7e8373310",
-      "released_sha256": "88efdbc0c3e5ed4106b2d53e9e7900f7fa865c3132180648d95d118441c8042d",
+      "released_sha256": "916ec3ef20495e965df13d6e7cf8f19b976c6979b50f85c67088cd95b676bfa3",
       "modified": true
     },
     {
@@ -32,12 +32,12 @@
     {
       "path": "src/efu/coordinate_fe.py",
       "source": "release-maintenance",
-      "released_sha256": "4fce31479785620a39fa8f4c4e045e57bc4eab9c71e47a070d1096b4290b738c"
+      "released_sha256": "34d3213e1faf835a45ebdf4f73f8fde8b28bcf1a5d87fce694d838e64ba1d3d4"
     },
     {
       "path": "src/efu/train.py",
       "source": "release-maintenance",
-      "released_sha256": "ed311f49520e616da1b4d6159519ccedede6926a94bfcfda3cb0820ddff3a165"
+      "released_sha256": "f9b0cc41dcb33c4f71e4dc7c458b6e9c2ab543ef915bd1f70243d5577ca05704"
     },
     {
       "path": "src/efu/utils/__init__.py",
@@ -68,7 +68,7 @@
       "source_commit": "e8837be2eed617d9d18c9222ebd7aa3480a264b4",
       "source_path": "src/utils/fe.py",
       "source_sha256": "04dafb7bd660e14fc90b6191ba589ebeae672c8df5d40a5344fbcb4797acacbf",
-      "released_sha256": "9c513c04863bea57450357ce99b9e086b901bec804c140b0c1d3e37eabc3824a",
+      "released_sha256": "350afa1db9e9676a9fe2981f2c234fe2bb175003ea22444a772f9e7fc59e34bc",
       "modified": true
     },
     {

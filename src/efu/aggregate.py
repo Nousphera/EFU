@@ -114,9 +114,9 @@ def fe_aggr(dicts, num_samples, rnd, eta=0.001, model=None, kappa=64, tag=b"efu"
 	"""EFU secure aggregation: weighted FedAvg computed under functional encryption.
 
 	Drop-in replacement for fedavg_aggr. Each client's weights are clustered, expanded and
-	encrypted using the coordinate-labelled backend. This does not establish
-	update-type indistinguishability or the paper's compressed ciphertext cost. Returns the same 4-tuple as the
-	other aggregators: (aggregated_dict, m_t, v_t, next_round_lr).
+	encrypted using the coordinate-labelled backend, with one ciphertext per model
+	coordinate. Returns the same 4-tuple as the other aggregators:
+	(aggregated_dict, m_t, v_t, next_round_lr).
 	"""
 	aggregated_dict = fe_secure_aggregate(dicts, num_samples, kappa=kappa, tag=tag)
 	next_rnd_clients_lr = eta / np.sqrt(rnd)

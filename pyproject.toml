@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "efu-research"
 version = "0.1.0"
-description = "EFU reproducible research implementation with audited protocol boundaries"
+description = "EFU: federated unlearning with coordinate-labelled functional encryption"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = {file = "LICENSE"}

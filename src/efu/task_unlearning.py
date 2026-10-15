@@ -1,4 +1,4 @@
-"""Paper section 5.2 task unlearning with explicit maintained recipe choices.
+"""Identity forgetting with retained gender learning (paper section 5.2).
 
 Joint identity/gender learning -> all-client identity Eq. (3) + gender CE ->
 gender-only learning. The secure aggregation backend remains coordinate FE.

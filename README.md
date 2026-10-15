@@ -2,13 +2,15 @@
 
 **EFU: Enforcing Federated Unlearning via Functional Encryption**
 
-[Paper](https://doi.org/10.1145/3746252.3761091) · [Preprint](https://arxiv.org/abs/2508.07873) · [Project](https://nousphera.github.io/EFU/) · [Citation](CITATION.cff)
+[<img src="docs/assets/icons/paper.svg" width="16" height="16" alt=""> Paper](https://doi.org/10.1145/3746252.3761091) · [<img src="docs/assets/icons/project.svg" width="16" height="16" alt=""> Project](https://nousphera.github.io/EFU/) · [<img src="docs/assets/icons/code.svg" width="16" height="16" alt=""> Code](https://github.com/Nousphera/EFU) · [Citation](CITATION.cff)
+
+Samaneh Mohammadi · Vasileios Tsouvalas · Iraklis Symeonidis · Ali Balador · Tanir Ozcelebi · Francesco Flammini · Nirvana Meratnia
+
+ACM CIKM 2025
 
 ## Abstract
 
 Federated unlearning (FU) algorithms allow clients in federated settings to exercise their “right to be forgotten” by removing the influence of their data from a collaboratively trained model. Existing FU methods maintain data privacy by performing unlearning locally on the client-side and sending targeted updates to the server without exposing forgotten data; yet they often rely on server-side cooperation, revealing the client's intent and identity without enforcement guarantees - compromising autonomy and unlearning privacy. In this work, we propose EFU (Enforced Federated Unlearning), a cryptographically enforced FU framework that enables clients to initiate unlearning while concealing its occurrence from the server. Specifically, EFU leverages functional encryption to bind encrypted updates to specific aggregation functions, ensuring the server can neither perform unauthorized computations nor detect or skip unlearning requests. To further mask behavioral and parameter shifts in the aggregated model, we incorporate auxiliary unlearning losses based on adversarial examples and parameter importance regularization. Extensive experiments show that EFU achieves near-random accuracy on forgotten data while maintaining performance comparable to full retraining across datasets and neural architectures - all while concealing unlearning intent from the server. Furthermore, we demonstrate that EFU is agnostic to the underlying unlearning algorithm, enabling secure, function-hiding, and verifiable unlearning for any client-side FU mechanism that issues targeted updates.
-
-*The abstract describes the paper. This maintained research implementation uses decentralized coordinate-labelled FE. It does not reproduce the paper's compressed-ciphertext costs or establish its security claims.* See [implementation scope](REPRODUCIBILITY.md).
 
 ## Setup
 
@@ -22,7 +24,7 @@ source .venv/bin/activate
 python -m pytest -q
 ```
 
-The setup script creates the venv, installs `requirements.txt` with the tested `constraints.txt`, and runs `pip check`. It selects installed macOS Command Line Tools without accepting an Xcode license. Equivalent manual setup:
+The setup script creates the venv, installs `requirements.txt` with the tested `constraints.txt`, and runs `pip check`. On macOS it selects the installed standalone Command Line Tools. Equivalent manual setup:
 
 ```bash
 python3.12 -m venv .venv
@@ -32,7 +34,7 @@ source .venv/bin/activate
 python -m pip install -c constraints.txt -r requirements.txt
 ```
 
-Requirements install the vendored PyMIFE source and native cryptographic dependencies. Installation and tests do not download datasets or model weights. See [source attribution](PROVENANCE.md).
+Requirements install the vendored PyMIFE source and native cryptographic dependencies. Installation and tests do not download datasets or model weights. See [attribution and licenses](PROVENANCE.md).
 
 ## Datasets
 
@@ -53,7 +55,7 @@ python scripts/prepare_data.py --dataset femnist --source /path/to/leaf/data/fem
 python scripts/prepare_data.py --dataset femnist --root data --validate
 ```
 
-LFW uses a documented, seeded identity-classification split; FEMNIST retains writer IDs and all 62 label indices. These imports feed the same learning/unlearning trainer. See [dataset acquisition and split conventions](DATASETS.md); historical splits are not recovered. The [two-head identity-forgetting/gender-retention route](TASK_UNLEARNING.md) is implemented with explicit supplied annotations and separately recorded recipe choices.
+LFW uses a documented, seeded identity-classification split; FEMNIST retains writer IDs and all 62 label indices. These imports feed the same learning/unlearning trainer. See [dataset acquisition and split conventions](DATASETS.md). The [two-head identity-forgetting/gender-retention route](TASK_UNLEARNING.md) accepts explicit supplied annotations.
 
 For an explicit image dataset split, use `--dataset imagefolder --source /path/to/splits`, where the source contains `train/CLASS/*` and `test/CLASS/*`. Validation checks class agreement, readable images, exact duplicate image content across splits and file changes. [DATASETS.md](DATASETS.md) gives the complete layout and limits; `python scripts/prepare_data.py --help` lists all options.
 
@@ -73,7 +75,7 @@ efu-train --dataset cifar10 --data-root data --model tiny \
 efu-train --help
 ```
 
-`--method fedavg|retrain` provides plaintext controls. Define a request with `--forget-client`, `--forget-fraction` or `--forget-class`, `--unlearn-start`, `--unlearn-rounds` and `--unlearn-epochs`. Scheduled unlearning always includes the requester. `--attack-steps 100` selects the recovered APGD iteration count; the diagnostic default is 2. Models `resnet18` and `vit_b_32` support explicit `--pretrained` weight downloads. `--partition writer` preserves FEMNIST writers as clients and requires `--clients` to equal the manifest's training-writer count. The default is seeded Dirichlet label partitioning.
+`--method fedavg|retrain` provides plaintext controls. Define a request with `--forget-client`, `--forget-fraction` or `--forget-class`, `--unlearn-start`, `--unlearn-rounds` and `--unlearn-epochs`. Scheduled unlearning always includes the requester. `--attack-steps 100` uses 100 APGD iterations; the smoke-test default is 2. Models `resnet18` and `vit_b_32` support explicit `--pretrained` weight downloads. `--partition writer` preserves FEMNIST writers as clients and requires `--clients` to equal the manifest's training-writer count. The default is seeded Dirichlet label partitioning.
 
 For task-level unlearning, supply a per-image `path,gender` CSV during LFW preparation
 with `--gender-annotations`, then select the two-head route:
@@ -86,16 +88,20 @@ efu-train --task identity-gender --dataset lfw --data-root data --model tiny \
 
 All clients forget identity while retaining gender, then continue with gender-only
 training. [TASK_UNLEARNING.md](TASK_UNLEARNING.md) specifies annotation coverage,
-loss routing, controls, backbone choices and reproduction limits. No gender labels
+loss routing, controls, backbone choices and evaluation. No gender labels
 are inferred.
 
-The maintained runner is a local federated simulation, with all parties in one process. Its input and aggregation paths are described in [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
+The runner simulates clients and aggregation in one process. [Implementation and experiment settings](REPRODUCIBILITY.md) describe the protocol, numerical representation and evaluation metrics.
 
-## Outputs and reproducibility
+## Outputs
 
 Each named run saves JSON containing configuration, data-manifest hash, exact client partitions, participant/sample counts, metrics and environment versions. A sibling `.pt` stores the final CPU state dictionary and configuration, loadable with `torch.load(..., weights_only=True)`. Existing JSON/checkpoint paths are protected; choose a new output name to rerun. Save the input manifest and run `--validate` before a research experiment; training checks label/split identity, while full file hashing is an explicit preparation check.
 
-**The release encrypts expanded coordinates (d ciphertexts), not kappa centroids.** It retains the local learning/unlearning operations while avoiding mask reuse in the recovered compressed wrapper. It does not establish paper benchmark results, cryptographic security, network isolation or dropout recovery. Full-model encrypted runs are expensive and unbenchmarked. [REPRODUCIBILITY.md](REPRODUCIBILITY.md) separates paper settings, implemented behavior and remaining gaps.
+## Protocol
+
+The implementation uses decentralized, coordinate-labelled functional encryption on P-256. Clients cluster weights, expand their local vector, and encrypt each coordinate with a unique session/round/position label. Each client sends **d ciphertexts for d model coordinates**; the paper's compressed transport uses κ encrypted centroids. These are different communication and encryption costs. Client secrets stay in client objects; the aggregation object holds public parameters and functional shares. BatchNorm buffers are aggregated in plaintext.
+
+All selected clients must contribute to a round. This local simulator uses in-process message delivery; network authentication, process isolation and dropout recovery require a separate deployment layer. [Protocol details](REPRODUCIBILITY.md) specify fixed-point precision, public bounds and aggregation checks.
 
 ## Citation
 
@@ -114,4 +120,4 @@ Each named run saves JSON containing configuration, data-manifest hash, exact cl
 
 ## License and attribution
 
-See [LICENSE](LICENSE), [NOTICE](NOTICE), and [PROVENANCE.md](PROVENANCE.md) for the first-party and third-party terms and exact source commits. Imported code retains its original license notices; these may differ from the repository's root license.
+See [LICENSE](LICENSE), [NOTICE](NOTICE), and [PROVENANCE.md](PROVENANCE.md) for the component licenses and source attribution. Third-party code retains its original notices.

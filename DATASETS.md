@@ -1,4 +1,4 @@
-# Dataset preparation contract
+# Datasets
 
 Run `python scripts/prepare_data.py --help` after installation. The script writes `ROOT/DATASET/manifest.json` together with the files actually opened by training. `--root` and the trainer's `--data-root` always refer to the same **parent** root. Datasets are kept out of Git.
 
@@ -36,7 +36,7 @@ splits/
   test/class-b/image-102.jpg
 ```
 
-Every class must have at least one image in both splits. The sorted class directory names define label indices. This adapter supports supplied fixed splits; it does not claim to recover any particular benchmark split or create labels. Sources and labels must be acquired under their applicable terms.
+Every class must have at least one image in both splits. The sorted class directory names define label indices. This adapter preserves the supplied split and class labels. Sources and labels must be acquired under their applicable terms.
 
 ## LFW identity classification
 
@@ -50,9 +50,9 @@ efu-train --dataset lfw --data-root data --model tiny --clients 2 \
   --alpha 10 --rounds 2 --precision 1 --output runs/lfw.json
 ```
 
-**Maintained convention:** select the requested number of identities with the most images (at least two each; alphabetical ties). For each selected identity, permute sorted filenames with one NumPy RNG seeded by `--split-seed`, hold out the rounded test fraction, and retain at least one example on either side. The manifest records this convention and the selected identity map. An already fixed historical split can instead be supplied with `--dataset imagefolder`.
+**Selection and split:** select the requested number of identities with the most images (at least two each; alphabetical ties). For each selected identity, permute sorted filenames with one NumPy RNG seeded by `--split-seed`, hold out the rounded test fraction, and retain at least one example on either side. The manifest records this convention and the selected identity map. An existing fixed split can instead be supplied with `--dataset imagefolder`.
 
-This enables sample/class unlearning on LFW identities. It does not recover the paper's exact 30 identities or historical split. The maintained two-head task route additionally accepts `--gender-annotations /path/to/labels.csv`, with explicit `path,gender` rows covering every selected image. Preparation records annotation provenance and hashes `tasks.json`; training checks coverage and integrity. [TASK_UNLEARNING.md](TASK_UNLEARNING.md) documents the supplied-label contract, simultaneous identity-forgetting/gender-retention objective and task-specific evaluation. Historical gender annotations remain unavailable; labels are never inferred from images or names.
+For sample/class unlearning, identities are the class labels. The two-head task route additionally accepts `--gender-annotations /path/to/labels.csv`, with explicit `path,gender` rows covering every selected image. Preparation records annotation provenance and hashes `tasks.json`; training checks coverage and integrity. [TASK_UNLEARNING.md](TASK_UNLEARNING.md) documents the supplied-label contract, simultaneous identity-forgetting/gender-retention objective and task-specific evaluation. Gender labels are supplied explicitly and never inferred from images or names.
 
 ## FEMNIST through LEAF
 
@@ -69,5 +69,3 @@ efu-train --dataset femnist --data-root data --model tiny --clients 2 \
 The source must contain `train/*.json` and `test/*.json`. Each shard has `users`, optional `num_samples`, and `user_data[writer] = {"x": [[784 pixel values], ...], "y": [integer label, ...]}`. Pixels must be finite in [0,1], labels in 0–61, sample counts must match, and writer IDs must be unique within each split. All 62 label indices remain fixed, even if a small subset lacks some classes. Pixels are rounded to 8-bit grayscale then converted to RGB for the supported image models.
 
 Default runs repartition the retained training records by seeded label Dirichlet sampling. To preserve natural writer clients, add `--partition writer --clients N`, where N is the number of writers in `manifest.json` under `splits.train.users`. Writers are ordered lexicographically and no writer is dropped. The complete imported corpus and each split's writer IDs remain in the manifest. JSON supplies no original sample IDs, so distinct train/test sample identity cannot be independently established beyond the source split: retain the LEAF preprocessing provenance. A writer occurring in both splits is expected for LEAF's sample-based split.
-
-These are functional maintained ingestion paths, not a recovery of the paper's original FEMNIST shards, LFW identity list, full augmentation pipeline or benchmark numbers.

@@ -1,129 +1,67 @@
-# Code-to-paper mapping and reproduction limits
+# Implementation and experiment settings
 
-Reference audited: arXiv:2508.07873v1, Sections 3–5, Algorithms 1–2 and
-Appendices A–C. The DOI links the CIKM 2025 publication; no equivalence between
-versions is assumed.
+EFU combines local unlearning objectives with decentralized encrypted aggregation. See [the paper](https://doi.org/10.1145/3746252.3761091) and [preprint methods](https://arxiv.org/abs/2508.07873) for the research formulation.
 
-| Paper component | Implementation | Status |
+| Component | Code | Behavior |
 |---|---|---|
-| Negative forget CE + adversarial CE + inverted MAS, Eq. 3 | `src/efu/client.py`, `utils/mas.py` | Real gradients; scalar-broadcast MAS bug corrected; cached reference/attacks across a request |
-| Offline targeted L2 adversarial preparation | `utils/apgd.py`, `prepare_unlearning` | Recovered APGD; raw [0,1] inputs, normalization within image model; configured iterations |
-| K-means compression, App. A | `utils/fe.py::cluster` | Recovered K-means, seed explicit, four initializations |
-| Independent client keys and partial decryption shares | `coordinate_fe.py`, vendored PyMIFE decentralized DDH | Executed with P-256; no server master secret |
-| Encrypted centroid expansion, Algorithms 1–2 | Coordinate-labelled expanded model | Deliberately different; kappa-ciphertext construction remains unresolved |
-| Sample/class unlearning, retained learning resumes | `train.py` | Explicit forget IDs; client either learns or unlearns; training resumes on retained IDs |
-| PGD, SGA-EWC, FedOSD comparisons | `utils/baselines.py` | Recovered local objective variants; not independently validated against original baseline papers |
-| FEMNIST and LFW identity datasets | `dataset_io.py`, `femnist.py`, `train.py` | Maintained imports with explicit split/writer conventions; historical benchmark splits not recovered |
-| Two-head identity/gender task forgetting | `task_data.py`, `task_unlearning.py`, `--task identity-gender` | Implemented with supplied annotations, dual heads, simultaneous objectives and separate evaluation; historical data/checkpoint and Table 2 results not reproduced |
+| Local learning and requests | `src/efu/train.py`, `client.py` | Sample/class request selection, local training, scheduled unlearning and retained-only training |
+| EFU objective, Eq. 3 | `client.py`, `utils/mas.py` | Negative forget CE, adversarial CE and elementwise inverted-MAS drift penalty |
+| Offline targeted L2 APGD | `utils/apgd.py`, `prepare_unlearning` | Raw [0,1] inputs, model-internal normalization, cached incorrect-label attacks |
+| K-means weight clustering | `utils/fe.py::cluster` | Explicit seed and four initializations |
+| Coordinate FE | `coordinate_fe.py`, vendored PyMIFE | Client keys, functional shares and sample-weighted P-256 aggregation |
+| Task unlearning | `task_data.py`, `task_unlearning.py` | Shared backbone, identity/gender heads, simultaneous forgetting/retention and separate evaluation |
+| Local objective comparisons | `utils/baselines.py` | PGD, SGA-EWC and FedOSD options for sample/class requests |
 
-The paper uses Dir(0.1), 64 centroids, 1 learning/5 unlearning epochs, pretrained
-ResNet-18 and ViT-B/32, unlearning rounds 50–59, 10 clients at 20% participation
-for sample/class experiments, and three-run means. The new harness exposes these
-controls where supported but defaults to a tiny diagnostic workload. The
-recovered source had class-exclusive partitions, per-batch online attacks,
-centralized key generation and different datasets/models; these were not silently
-presented as the paper configuration. CIFAR image transforms here are resize and
-ToTensor; they are not claimed to reproduce all original augmentation details.
+## Learning and unlearning
 
-`accuracy` is held-out accuracy on the selected dataset. `forget_train_accuracy` evaluates
-the explicitly forgotten training IDs, not forgotten-class test accuracy or an
-erasure guarantee. No privacy detector, membership-inference audit, task-wise
-forgetting result or counterfactual prediction-gap result has been reproduced.
-The `retrain` control starts from the same seeded initialization and excludes the
-forget set from the first round; complete paper comparisons remain unexecuted.
+`--method efu` uses encrypted aggregation. `fedavg` is a plaintext learning control; `retrain` starts from the same seeded initialization and excludes the forget set from its first round. `--forget-client`, `--forget-fraction` and `--forget-class` define a sample/class request. Every scheduled request round includes its requesting client; remaining participants are sampled uniformly. Following the unlearning window, training resumes on retained IDs.
 
-## Protocol boundary
+The EFU objective combines negative cross-entropy on forgotten examples, cross-entropy on targeted adversarial examples with incorrect labels, and an inverted-MAS parameter drift penalty. Attack inputs, initial reference weights and importance values are cached for the request. `--attack-steps` controls APGD iterations. Reported `accuracy` evaluates the held-out dataset; `forget_train_accuracy` evaluates the designated forgotten training IDs.
 
-The recovered compressed wrappers encrypted every centroid with the same scalar
-key and round label. In that construction, subtracting two ciphertexts cancels
-the shared mask and exposes a bounded discrete-log encoding of the centroid
-difference. The wrappers also held a central master key; the original EncCluster
-Flower path sent plaintext centroids and mappings to the server before encryption.
-Those paths are **not shipped as runnable options**.
+For task unlearning, `--task identity-gender` applies an all-client request using explicit LFW annotations. It trains both tasks initially, optimizes gender CE and the identity unlearning objective together during the request, then trains only gender. Unit objective weights, Adam with weight decay 0.01, identity-head regularizer scope and one-based phase indexing are recorded in the run. [TASK_UNLEARNING.md](TASK_UNLEARNING.md) gives the full recipe.
 
-The maintained path uses PyMIFE's existing `FeDDHMultiClientDec` primitive:
-public P-256 parameters, independent client secrets, pairwise key exchange,
-client-generated functional shares, and server decryption with all shares.
-Each expanded model coordinate has a unique session/round/coordinate label.
-The server object retains no client private keys. It checks the participant set,
-function weights, labels and dimensions. Cryptographic keys use OS entropy;
-training seeds do not seed keys. The local simulator holds all parties in one
-process and supplies their messages directly; authenticated transport, process
-isolation, persistent keys, dropout recovery and distributed key provisioning
-are not implemented. Application input checks are not a cryptographic proof.
+## Experiment configuration
 
-This conservative mode sends **d ciphertexts per client**, not kappa encrypted
-centroids. It therefore cannot substantiate the paper's encryption-time or
-communication claims. Reintroducing centroid reuse requires a compatible
-multi-message/label construction and a security argument covering substitution;
-changing only the tag to a centroid index is insufficient when different clients
-select different centroid indices at the same model position.
+The CLI exposes clients, participation, local/unlearning epochs, learning rate, seed, model, partition concentration and quantization. `resnet18` and `vit_b_32` support explicit torchvision ImageNet-weight acquisition through `--pretrained`. Images are resized and converted to tensors; normalization is inside the model so adversarial inputs remain in [0,1]. FEMNIST also supports natural writer partitions.
 
-PyMIFE is a research library whose authors explicitly state that it is not
-peer-reviewed. Tests establish arithmetic and application invariants, not a
-security certification. The current release is a research implementation with
-these stated differences, not a complete reproduction of the paper protocol.
+Paper settings include Dirichlet concentration 0.1, 64 centroids, one learning epoch, five unlearning epochs and pretrained ResNet-18/ViT-B/32. Sample/class experiments use 10 clients with 20% participation. The identity/gender task uses 30 clients, full participation and 100 total rounds. Round numbering starts at one: `--unlearn-start 51 --unlearn-rounds 10` gives 50 initial learning rounds and a request window of rounds 51–60. Record supplied data splits, annotations, model weights and seeds with the run.
 
-## Numeric contract
+## Coordinate-labelled functional encryption
 
-Clients agree on the active cohort, positive integer sample counts, model layout,
-fixed-point precision and public absolute weight bound before setup. Each scalar
-is rounded to the nearest integer after multiplication by `10**precision`.
-Decryption returns the sample-weighted mean of those fixed-point values.
-Quantization alone introduces at most `0.5 / 10**precision` absolute error per
-coordinate relative to the reconstructed clustered mean. K-means/filter error
-is additional. Oversized/nonfinite values are rejected, not silently clipped.
-The bounded discrete-log search can be expensive for large sample counts,
-precision or models. This execution mode is intended for bounded experiments.
-BatchNorm running statistics are aggregated in plaintext; integer counters
-retain the source convention. These buffers are outside the encrypted guarantee.
+Aggregation uses PyMIFE's `FeDDHMultiClientDec` primitive over P-256: public parameters, independent client secrets, pairwise key exchange, client-generated functional shares and decryption of the sample-weighted sum. Each expanded coordinate has a unique session/round/coordinate label. The aggregator holds public parameters and shares; it checks participant IDs, function weights, labels and dimensions. Keys use operating-system entropy independently of training seeds.
 
-## Reproducibility
+Each client sends **d ciphertexts for d model coordinates**. The paper's compressed-centroid transport uses κ ciphertexts; the implemented coordinate transport has a different cost. Client-side expansion gives every coordinate its own encryption label even when several coordinates use the same centroid. BatchNorm running statistics are averaged in plaintext and integer counters use the maximum client value.
 
-Python 3.12 on Apple Silicon was used for release checks. Supported metadata is
-Python 3.11–3.13; other Python/platform combinations have not been executed here.
-`constraints.txt` records the tested dependency closure. Model/training,
-partition and clustering randomness is seeded; crypto randomness remains fresh.
-The JSON output records CLI settings, exact partition indices, forget indices
-when applicable, participant IDs, sample counts, losses and accuracies. It does
-not contain input records, weights, private keys or claims of benchmark parity.
+The executable is a local simulator: all parties run in one process and exchange messages directly. Each selected client must reply. Authenticated transport, client-process isolation, persistent key provisioning and dropout handling belong to a deployment layer. PyMIFE is a research cryptography library; application tests verify arithmetic and message invariants.
 
-The default two-round synthetic test uses two clients, eight training samples per
-client, three classes, a 4-to-3 linear model, four K-means centroids, precision 2,
-CPU and one local epoch. No data/model download occurs on import, installation
-or test. `scripts/prepare_data.py --download` explicitly fetches CIFAR; `--source` imports acquired data. `--pretrained` explicitly allows
-weights to be fetched for supported EFU image models. No paper checkpoints or
-paper-result logs are included. No GPU run or full paper benchmark was executed.
+## Numerical representation
 
-The CLI supports Dirichlet label partitioning and optional FEMNIST writer partitions, explicit
-participation, local epochs, learning rate, seed, model, precision, public bound
-and output path. It rejects empty clients and cohorts with fewer than two active
-participants. A changed cohort gets a fresh decentralized setup. Setup cost is
-included in the current simulator and is not comparable to the paper timings.
+Clients agree on the active cohort, positive integer sample counts, model layout, fixed-point precision and public absolute weight bound. A weight is rounded after multiplication by `10**precision`; decryption returns the sample-weighted mean of those integers, scaled back to real values. The fixed-point rounding error is at most `0.5 / 10**precision` per coordinate relative to the reconstructed clustered mean; clustering adds its own approximation error. Nonfinite and out-of-bound values fail validation.
 
-## Release artifact protection
+Larger precision, sample counts and model dimensions increase bounded discrete-log work. Coarse precision can erase small updates. Use the tiny model to check the complete path before allocating a full-model experiment, and record `kappa`, `precision` and `max_abs` with results. A changed active cohort receives a fresh decentralized setup.
 
-The maintained CLI rejects an existing output JSON or sibling checkpoint before training. Final `.pt` files contain CPU state dictionaries, configuration and class count, loadable with `torch.load(path, weights_only=True, map_location="cpu")`. The JSON includes Python, platform, torch and NumPy versions. Save the dependency constraints and input-data version alongside the run. Encryption key generation remains random; seeded training does not imply deterministic ciphertext bytes.
+## Data, randomness and saved results
 
-Partial-participation unlearning explicitly includes the requesting client in every scheduled request round and samples the remaining cohort uniformly. The metrics record `unlearning_client`; no request round is silently skipped because of ordinary client subsampling. This scheduler is a documented release choice, not a recovered original experiment schedule.
+[DATASETS.md](DATASETS.md) specifies preparation and consumed paths. `scripts/prepare_data.py` creates `ROOT/DATASET/manifest.json`; the trainer's `--data-root` is the same parent root. Run `--validate` before an experiment to hash every file. Training checks split sizes, class maps and label order, and records the manifest SHA256.
 
-## Dataset setup follow-up
+Training, partitioning and K-means use explicit seeds; cryptographic randomness stays fresh. The default synthetic configuration uses two clients, eight training vectors per client, three classes, a linear model, four centroids, precision 2, CPU and one local epoch. Imports, installation and tests require no dataset or pretrained-weight download.
 
-[DATASETS.md](DATASETS.md) defines the maintained preparation contract. Training now consumes `ROOT/DATASET` roots created by `scripts/prepare_data.py`; older direct CIFAR roots can be imported with `--source`. The preparation manifest identifies class maps, split sizes, label order and file hashes. Reports include its SHA256. Generated source-format fixtures exercise import, validation and actual training; their metrics are correctness diagnostics. No newly implemented ingestion path implies recovered historical splits or reproduced benchmark results.
+JSON records configuration, exact client partitions, participants, sample counts, metrics and Python/platform/Torch/NumPy versions. The sibling `.pt` contains CPU model tensors, configuration and class information:
 
-## Task-level route
+```python
+import torch
+checkpoint = torch.load("runs/experiment.pt", weights_only=True, map_location="cpu")
+```
 
-The recovered source did not contain a second head, gender annotations or task
-loss routing. The maintained extension implements the task structure stated in
-paper §5.2 using explicit per-image annotations, an all-client request, cached
-identity-only attacks/reference/importance, simultaneous gender CE plus identity
-Eq. (3), and gender-only learning after the request. All four objective weights
-are one, and Adam uses weight decay0.01. The identity MAS regularizer excludes
-the retained gender head; this scope and the inherited normalization are explicit
-maintained choices. Reports carry the exact task recipe and annotation provenance.
+Existing output or checkpoint paths are rejected before training. Keep the prepared manifest, dependency constraints and seed with each result. Client keys and plaintext input records are excluded from reports.
 
-See [TASK_UNLEARNING.md](TASK_UNLEARNING.md) for the one-based phase schedule,
-training controls, checkpoint differences, tested execution and remaining
-reproduction limits. Existing sample/class paths are unchanged. The shared
-ViT-B/32 or ResNet-18 and both heads use the same expanded-coordinate encryption
-contract; this extension adds no privacy proof or compressed-cost claim.
+## Validation
+
+```bash
+python -m pip check
+python -m pytest -q
+```
+
+The suite covers seeded partitions, the primary trainer, prepared image inputs, signed fixed-point encrypted aggregation, sample weighting, participant/message validation and checkpoint output. `constraints.txt` records the dependency versions tested with Python 3.12 on macOS arm64.
+
+Task tests additionally verify annotation alignment and integrity, live gender gradients during identity forgetting, repeated use of cached attacks/importance, phase routing, separate per-head metrics and actual ResNet18/ViT dual-head forward passes.

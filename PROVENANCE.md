@@ -1,47 +1,15 @@
-# Provenance and licensing
+# Attribution and licenses
 
-## Recovery sources
+## Source attribution
 
-- Authors' public implementation: [SamaneMohammadi/EFU](https://github.com/SamaneMohammadi/EFU/tree/e8837be2eed617d9d18c9222ebd7aa3480a264b4), commit `e8837be2eed617d9d18c9222ebd7aa3480a264b4`.
-- Maintained decentralized primitive: [MechFroG88/PyMIFE](https://github.com/MechFroG88/PyMIFE/tree/69938282ed17fd2f1ddb11102c1480ad6dc5c04b), commit `69938282ed17fd2f1ddb11102c1480ad6dc5c04b`, package version 0.0.14. Its complete source snapshot and original MIT license are in `modules/mife`.
-- The existing Nousphera history, `docs/` project website and paper citation are preserved. Full recovery snapshots remain separately archived during preparation; this release contains the selected executable source, not generated build artifacts, binaries, checkpoints or data.
+- EFU implementation by Samaneh Mohammadi and the EFU authors: [SamaneMohammadi/EFU](https://github.com/SamaneMohammadi/EFU/tree/e8837be2eed617d9d18c9222ebd7aa3480a264b4), commit `e8837be2eed617d9d18c9222ebd7aa3480a264b4`.
+- Decentralized FE primitive: [MechFroG88/PyMIFE](https://github.com/MechFroG88/PyMIFE/tree/69938282ed17fd2f1ddb11102c1480ad6dc5c04b), commit `69938282ed17fd2f1ddb11102c1480ad6dc5c04b`, package 0.0.14. Its source and MIT license are included in `modules/mife`.
+- APGD adapts [fra31/auto-attack](https://github.com/fra31/auto-attack), copyright 2020 Francesco Croce, under the MIT license in `licenses/AUTOATTACK-LICENSE`.
 
-`SOURCE_MANIFEST.json` records upstream paths, original hashes and released hashes.
-Source moved into the `efu` Python namespace. Modified imported files carry
-notices; new harness/protocol/test/documentation files are maintenance additions.
-
-## Changes from the recovered implementation
-
-- Replaced central-master-key / repeated centroid-label wrappers with the existing decentralized PyMIFE primitive and unique coordinate labels.
-- Added an explicit numeric/shape/participant contract, sample-weighted verification and a no-download seeded training path.
-- Added Python package metadata, constraints, tests, provenance and reproducibility documentation.
-- Removed nonfunctional launchers and machine-specific data paths from the released tree; source commits above preserve their history.
-- Corrected elementwise inverted MAS and offline attack preparation/cache; model normalization stays inside the attacked model.
+[SOURCE_MANIFEST.json](SOURCE_MANIFEST.json) identifies upstream file paths and hashes. Imported files retain attribution and modification notices. The `efu` package includes the training CLI, coordinate-labelled protocol, dataset preparation and dual-task integration; [implementation details](REPRODUCIBILITY.md) describe these components.
 
 ## License records
 
-The repository and recovered EFU root `LICENSE` contain Apache-2.0; the recovered
-README's MIT statement was inconsistent with its license file and is not reused.
-`licenses/UPSTREAM-LICENSE` preserves that source text. The older bundled mife
-snapshot supplied Apache text while declaring MIT metadata; it is replaced by
-canonical PyMIFE with its actual MIT copyright notice, and the old text is
-retained in `licenses/MIFE-SNAPSHOT-LICENSE` for provenance.
+The repository's [LICENSE](LICENSE) is Apache-2.0. The EFU source license is also preserved in [licenses/UPSTREAM-LICENSE](licenses/UPSTREAM-LICENSE). PyMIFE retains its MIT license and copyright 2023 Tan Kel Zin. An earlier MIFE snapshot's Apache license text is retained in `licenses/MIFE-SNAPSHOT-LICENSE`; the bundled canonical PyMIFE component is governed by its own MIT notice.
 
-`utils/apgd.py` identifies its adaptation from [fra31/auto-attack](https://github.com/fra31/auto-attack).
-The original MIT notice (copyright 2020 Francesco Croce) is included as
-`licenses/AUTOATTACK-LICENSE`. PyMIFE retains copyright 2023 Tan Kel Zin.
-
-## Dataset/setup follow-up (2026-10-15)
-
-The maintained release adds `scripts/setup.sh`, `scripts/prepare_data.py`, namespaced dataset preparation/validation, manifests and generated-source integration tests. These modules are new integration code rather than recovered historical experiment scripts. Official dataset loading remains delegated to torchvision; fixed-split imports remain user-supplied. See `DATASETS.md` for split conventions and `REPRODUCIBILITY.md` for method/benchmark limits.
-
-## Task-unlearning extension (2026-10-15)
-
-`task_data.py`, `task_unlearning.py` and the `--task identity-gender` route are new
-maintained integration code grounded in arXiv:2508.07873v1 §5.2/Table2 and Eq.(3).
-They add explicit annotation import, a shared backbone with two heads, all-client
-phase routing and separate held-out metrics. Existing APGD, inverted MAS and
-coordinate FE are reused. No original gender labels or Table2 checkpoint were
-recovered; annotations must be supplied by the experimenter. Unit task-loss
-weights, identity-only regularizer scope, phase indexing and checkpoint-provider
-differences are recorded in TASK_UNLEARNING.md and saved run metadata.
+[NOTICE](NOTICE) collects component attribution. Dataset and pretrained-model access terms are separate from software licenses.

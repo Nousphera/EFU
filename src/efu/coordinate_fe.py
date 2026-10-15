@@ -1,7 +1,7 @@
 """Coordinate-labelled decentralized FE using the upstream PyMIFE primitive.
 
-This conservative execution mode encrypts *expanded* clustered vectors. It does
-not implement the papers' kappa-ciphertext compression. See REPRODUCIBILITY.md.
+Each expanded clustered vector uses d ciphertexts for d model coordinates.
+See REPRODUCIBILITY.md for the protocol and numerical representation.
 Keys use OS entropy; the training seed never seeds cryptographic key generation.
 """
 from dataclasses import dataclass

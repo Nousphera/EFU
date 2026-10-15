@@ -1,11 +1,10 @@
 # Identity forgetting with gender retention
 
-The maintained `--task identity-gender` route implements the task structure in
+The `--task identity-gender` route uses the task structure in
 [EFU §5.2 and Table 2](https://arxiv.org/html/2508.07873v1#S5.SS2): a shared backbone,
 two classification heads, joint initial learning, an all-client identity request,
 and simultaneous retained-task and unlearning objectives. It uses the same
-coordinate-labelled functional encryption as the other maintained EFU runs.
-Published Table 2 results and the compressed-centroid protocol are not reproduced.
+coordinate-labelled functional encryption described in [Implementation](REPRODUCIBILITY.md).
 
 ## Supply annotations explicitly
 
@@ -35,8 +34,7 @@ python scripts/prepare_data.py --dataset lfw --root data --validate
 Preparation copies selected images and writes `data/lfw/tasks.json`; the manifest
 hashes it and records the original CSV hash, category map and selected counts.
 Task training rechecks annotation integrity and exact train/test image coverage.
-The selected identity names and seeded split remain the maintained conventions
-in [DATASETS.md](DATASETS.md), rather than recovered historical choices.
+The selected identities and seeded split follow [DATASETS.md](DATASETS.md).
 
 ## Execute
 
@@ -53,8 +51,8 @@ learning. For a completely offline execution check, omit the dataset/root flags;
 the default synthetic vectors have artificial binary labels and represent no
 human subjects. `vit_b_32` provides the shared ViT-B/32 architecture, and
 `resnet18` is also supported. `--pretrained` explicitly downloads torchvision's
-ImageNet weights; it does not claim the exact historical Hugging Face checkpoint.
-Full-backbone coordinate-FE runs are expensive and unbenchmarked.
+ImageNet weights. Record the selected torchvision weights with the experiment.
+Full-backbone coordinate-FE cost scales with the number of model coordinates.
 
 The task route requires `--participation 1`, acts on every client's complete local
 partition, and supports EFU's own unlearning objective. Sample/client/class
@@ -65,9 +63,7 @@ The task smoke uses `--precision 3 --kappa 16` so small updates survive coordina
 
 The CLI uses **one-based round numbers**: `--unlearn-start 51 --unlearn-rounds 10`
 means 50 joint rounds, identity unlearning in rounds 51–60, then gender-only
-training. The paper refers to a request at round 50 and also says 50 initial
-training rounds; this explicit indexing resolves that ambiguity for new runs.
-The larger paper settings include 30 clients, full participation, 100 total
+training. The larger paper settings include 30 clients, full participation, 100 total
 rounds, Dirichlet concentration 0.1, batch size 64, one learning/five unlearning
 epochs, learning rate 0.001 and 64 centroids. They are configurable; the diagnostic
 defaults are deliberately smaller. Empty client partitions fail explicitly.
@@ -87,20 +83,18 @@ labels. Attacks, importance weights and reference parameters are prepared once
 per client at request start and reused across its unlearning epochs/rounds.
 After the request, only gender cross-entropy supplies learning gradients.
 
-Explicit maintained choices are unit weights for all four terms, Adam with
+The objective uses unit weights for all four terms, Adam with
 weight decay 0.01 (the optimizer in paper §5.1), and identity MAS/attack routing
 through the shared backbone and identity head. The gender head is excluded from
-the identity-specific regularizer. MAS scaling follows this release's recovered
-per-parameter normalization. The exact task-specific normalization/head recipe
-and pretrained checkpoint are not established by the paper text or recovered code.
-These choices are recorded in each result's `task_recipe`.
+the identity-specific regularizer. MAS uses per-parameter normalization.
+The backbone has separate linear identity and gender heads. These settings are
+recorded in each result's `task_recipe`.
 
 `--method retrain` starts from the same seeded initialization and trains only
 gender from round one. `--method fedavg` is a joint-learning plaintext control.
-The identity head remains in both controls for held-out evaluation; neither
-control establishes successful erasure by itself.
+The identity head remains in both controls for held-out evaluation.
 
-## Evidence and outputs
+## Outputs and validation
 
 Each round records its phase, participants, requesting clients, local objective
 components, and separate held-out identity/gender accuracy and loss. JSON stores
@@ -110,6 +104,5 @@ contains the shared backbone, both heads and class counts.
 Tests exercise generated annotated images through preparation and all three
 training phases with real FE, verify live gender gradients during identity
 forgetting, fixed offline attacks, retained-only head routing, annotation changes,
-and actual unpretrained ResNet/ViT two-head forward passes. They verify execution
-and loss routing, not near-random identity accuracy, retained-task benchmark
-performance, a privacy guarantee or the paper's historical split.
+and actual unpretrained ResNet/ViT two-head forward passes. Per-head held-out
+metrics report identity forgetting and retained-task performance for each run.

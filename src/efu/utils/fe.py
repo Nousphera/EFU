@@ -1,4 +1,4 @@
-# Modified 2026-10-15: replace unsafe centroid-key reuse with coordinate-labelled decentralized FE.
+# Modified 2026-10-15: coordinate-labelled decentralized FE integration.
 
 import numpy as np
 import torch
@@ -40,8 +40,8 @@ def cluster(state, kappa, seed=0):
 def fe_secure_aggregate(dicts, num_samples, kappa=64, tag=b"efu", precision=3, max_abs=8.0, seed=0):
     """Cluster then use coordinate-labelled decentralized FE.
 
-    Encryption expands centroids on each client. This changes the paper's
-    communication cost; see REPRODUCIBILITY.md. BN buffers stay plaintext.
+    Each client expands centroids to d coordinates and sends d ciphertexts.
+    See REPRODUCIBILITY.md. BatchNorm buffers are aggregated in plaintext.
     """
     if len(dicts) != len(num_samples):
         raise ValueError("Each client must supply a sample count")

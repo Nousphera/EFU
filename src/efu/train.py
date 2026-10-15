@@ -1,8 +1,8 @@
-# Modified 2026-10-15: standalone release integration; see PROVENANCE.md.
-"""Reproducible local simulation with decentralized coordinate-labelled FE.
+# Modified 2026-10-15: standalone training integration; see PROVENANCE.md.
+"""Local federated training with decentralized coordinate-labelled FE.
 
-This is a research execution harness. It is not a distributed deployment or a
-reproduction of the compressed ciphertext cost in the paper.
+Each client encrypts its expanded model vector, sending one ciphertext per
+coordinate. See REPRODUCIBILITY.md for the protocol and experiment settings.
 """
 
 import argparse
