@@ -27,3 +27,7 @@ addopts = "-ra"
 
 [tool.setuptools]
 license-files = ["LICENSE", "THIRD_PARTY_LICENSES"]
+
+[tool.setuptools.data-files]
+"share/efu" = ["constraints.txt", "CITATION.cff", "citation.bib", "DATASETS.md", "TASK_UNLEARNING.md"]
+"share/efu/tests" = ["tests/conftest.py"]
