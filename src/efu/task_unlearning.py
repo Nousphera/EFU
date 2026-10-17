@@ -1,30 +1,20 @@
 """Identity forgetting with retained gender learning (paper section 5.2).
 
 Joint identity/gender learning -> all-client identity Eq. (3) + gender CE ->
-gender-only learning. The secure aggregation backend remains coordinate FE.
+gender-only learning. Transport and aggregation are handled by Experiment/Flower.
 """
 
-import copy
-import json
-from pathlib import Path
-import platform
-import random
-
-import numpy as np
 import torch
-from torch.utils.data import DataLoader
-
-from .task_data import IdentityGenderDataset, attach_task_labels
 
 
 class DualHeadModel(torch.nn.Module):
-    def __init__(self, name, identities, pretrained=False):
+    def __init__(self, name, identities, pretrained=False, model_root="models"):
         super().__init__()
         if identities < 2:
             raise ValueError("At least two identity classes are required")
         from .train import ImageModel
 
-        self.backbone = ImageModel(name, identities, pretrained)
+        self.backbone = ImageModel(name, identities, pretrained, model_root=model_root)
         if name == "resnet18":
             dimension = self.backbone.body.fc.in_features
             self.backbone.body.fc = torch.nn.Identity()
@@ -86,20 +76,20 @@ def fit_tasks(model, data, epochs, lr, retain_only=False):
     return {"objective": total / count}
 
 
-def prepare_task_unlearning(model, data, attack_steps=100):
+def prepare_task_unlearning(model, data, attack_steps=100, eps=0.4):
     """Cache once at request start, keeping gender labels aligned with attack rows."""
     from .client import prepare_unlearning
 
     batches = [(x, labels) for x, labels in data]
     identity_data = [(x, labels[:, 0]) for x, labels in batches]
     prepared = prepare_unlearning(
-        IdentityView(model), identity_data, attack_steps=attack_steps
+        IdentityView(model), identity_data, attack_steps=attack_steps, eps=eps
     )
     prepared["batches"] = [
         {
             "image": x,
             "identity": identity,
-            "gender": labels[:, 1].to(model.device),
+            "gender": labels[:, 1].cpu(),
             "adversarial": adversarial,
             "adversarial_identity": adversarial_identity,
         }
@@ -112,15 +102,13 @@ def prepare_task_unlearning(model, data, attack_steps=100):
 
 def task_objective(model, batch, prepared):
     """Unit-weight simultaneous CE_gender + identity Eq. (3), not alternating steps."""
+    batch = {name: value.to(model.device) for name, value in batch.items()}
     logits = model(batch["image"])
     identity_model = IdentityView(model)
-    regularizer = sum(
-        (
-            prepared["importance"][name]
-            * (parameter - prepared["reference"][name]).square()
-        ).sum()
-        for name, parameter in identity_model.named_parameters()
-        if name in prepared["importance"]
+    from .utils.ewc import quadratic_penalty
+
+    regularizer = quadratic_penalty(
+        identity_model, prepared["importance"], prepared["reference"]
     )
     return {
         "retain": torch.nn.functional.cross_entropy(logits["gender"], batch["gender"]),
@@ -134,7 +122,7 @@ def task_objective(model, batch, prepared):
     }
 
 
-def unlearn_task(model, prepared, epochs, lr):
+def unlearn_task(model, prepared, epochs, lr, mas_weight=1.0):
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=0.01)
     totals = {name: 0.0 for name in ("retain", "forget", "adversarial", "regularizer")}
@@ -143,6 +131,7 @@ def unlearn_task(model, prepared, epochs, lr):
         for batch in prepared["batches"]:
             optimizer.zero_grad(set_to_none=True)
             parts = task_objective(model, batch, prepared)
+            parts["regularizer"] = mas_weight * parts["regularizer"]
             sum(parts.values()).backward()
             optimizer.step()
             size = len(batch["identity"])
@@ -150,6 +139,80 @@ def unlearn_task(model, prepared, epochs, lr):
                 totals[name] += float(value.detach()) * size
             count += size
     return {name: value / count for name, value in totals.items()}
+
+
+def prepare_task_baseline(model, data, method, *, reference=None, mas=False):
+    """Explicit task adaptation: identity regularizer, simultaneous gender CE."""
+    from .utils.baselines import parameter_reference, prepare_sga_ewc
+    from .utils.mas import get_weights_importance
+
+    view = IdentityView(model)
+    batches = [(x.cpu(), y.cpu()) for x, y in data]
+    identity_data = [(x, y[:, 0]) for x, y in batches]
+    if method == "sga_ewc":
+        result = prepare_sga_ewc(view, identity_data)
+    else:
+        if method == "pgd" and reference is None:
+            raise ValueError("Task PGD requires a leave-one-out identity reference")
+        result = {
+            "reference": reference
+            if reference is not None
+            else parameter_reference(view)
+        }
+    if mas:
+        result["importance"] = get_weights_importance(view, identity_data)
+        result["mas_reference"] = parameter_reference(view)
+    result["batches"] = batches
+    return result
+
+
+def unlearn_task_baseline(
+    model, prepared, method, epochs, lr, *, mas_weight=0.0, ewc_weight=1.0, radius=3.0
+):
+    from .utils.baselines import project_parameters
+    from .utils.ewc import quadratic_penalty
+
+    view = IdentityView(model)
+    model.train()
+    if method == "pgd" and not prepared.get("initialized", False):
+        with torch.no_grad():
+            for name, parameter in view.named_parameters():
+                parameter.copy_(prepared["reference"][name].to(parameter))
+        prepared["initialized"] = True
+    if method == "pgd":
+        project_parameters(view, prepared["reference"], radius)
+    optimizer = torch.optim.SGD(
+        model.parameters(), lr=lr, momentum=0.9 if method == "pgd" else 0.0
+    )
+    total, count = 0.0, 0
+    for _ in range(epochs):
+        for x, labels in prepared["batches"]:
+            x, labels = x.to(model.device), labels.to(model.device)
+            optimizer.zero_grad(set_to_none=True)
+            outputs = model(x)
+            objective = torch.nn.functional.cross_entropy(
+                outputs["gender"], labels[:, 1]
+            ) - torch.nn.functional.cross_entropy(outputs["identity"], labels[:, 0])
+            if method == "sga_ewc":
+                objective = objective + 0.5 * ewc_weight * quadratic_penalty(
+                    view, prepared["fisher"], prepared["reference"]
+                )
+            elif method == "pgd":
+                if mas_weight:
+                    objective = objective + mas_weight * quadratic_penalty(
+                        view, prepared["importance"], prepared["mas_reference"]
+                    )
+            else:
+                raise ValueError("Task baseline must be pgd or sga_ewc")
+            objective.backward()
+            if method == "pgd":
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            optimizer.step()
+            if method == "pgd":
+                project_parameters(view, prepared["reference"], radius)
+            total += float(objective.detach()) * len(x)
+            count += len(x)
+    return {"objective": total / count}
 
 
 def evaluate_tasks(model, data):
@@ -180,163 +243,3 @@ def evaluate_tasks(model, data):
         }
         for name, values in totals.items()
     }
-
-
-def run_task(args):
-    from .train import load_data, loader
-    from .dataset_io import manifest_digest
-    from .aggregate import fedavg_aggr
-    from .utils.fe import fe_secure_aggregate
-
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.set_num_threads(1)
-    train, test, partitions, _, classes = load_data(args)
-    if args.dataset == "synthetic":
-        train = IdentityGenderDataset(train, (train.tensors[0][:, 0].mean(dim=(1, 2)) > 0.5).long())
-        test = IdentityGenderDataset(test, (test.tensors[0][:, 0].mean(dim=(1, 2)) > 0.5).long())
-        annotation_metadata = {
-            "label_origin": "artificial binary labels on generated images; no human subjects",
-            "gender_to_idx": {"synthetic_0": 0, "synthetic_1": 1},
-        }
-    else:
-        train, test, annotation_metadata = attach_task_labels(
-            train, test, args.data_root
-        )
-    model = DualHeadModel(
-        args.model, classes, args.pretrained
-    ).to(args.device)
-    test_loader = DataLoader(test, batch_size=args.batch_size)
-    history, prepared = [], {}
-    for round_id in range(1, args.rounds + 1):
-        if args.method == "retrain":
-            phase = "gender-only"
-        elif (
-            args.method == "efu"
-            and args.unlearn_start
-            <= round_id
-            < args.unlearn_start + args.unlearn_rounds
-        ):
-            phase = "identity-unlearning"
-        elif (
-            args.method == "efu"
-            and round_id >= args.unlearn_start + args.unlearn_rounds
-        ):
-            phase = "gender-only"
-        else:
-            phase = "joint-learning"
-        states, sizes, objectives = [], [], {}
-        for client_id, indices in enumerate(partitions):
-            local = copy.deepcopy(model)
-            data = loader(train, indices, args, shuffle=phase != "identity-unlearning")
-            if phase == "identity-unlearning":
-                if client_id not in prepared:
-                    prepared[client_id] = prepare_task_unlearning(
-                        local, data, attack_steps=args.attack_steps
-                    )
-                objectives[client_id] = unlearn_task(
-                    local, prepared[client_id], args.unlearn_epochs, args.lr
-                )
-            else:
-                objectives[client_id] = fit_tasks(
-                    local,
-                    data,
-                    args.local_epochs,
-                    args.lr,
-                    retain_only=phase == "gender-only",
-                )
-            states.append(
-                {
-                    name: value.detach().cpu().clone()
-                    for name, value in local.state_dict().items()
-                }
-            )
-            sizes.append(len(indices))
-        updated = (
-            fe_secure_aggregate(
-                states,
-                sizes,
-                kappa=args.kappa,
-                precision=args.precision,
-                max_abs=args.max_abs,
-                seed=args.seed,
-            )
-            if args.method == "efu" and args.aggregation == "encrypted"
-            else fedavg_aggr(states, sizes, rnd=round_id)[0]
-        )
-        full = model.state_dict()
-        full.update(
-            {
-                name: torch.as_tensor(value, dtype=full[name].dtype, device=args.device)
-                for name, value in updated.items()
-            }
-        )
-        model.load_state_dict(full, strict=True)
-        row = {
-            "round": round_id,
-            "phase": phase,
-            "participants": list(range(args.clients)),
-            "unlearning_clients": (
-                list(range(args.clients)) if phase == "identity-unlearning" else []
-            ),
-            "sample_counts": sizes,
-            "local_objectives": objectives,
-            "test": evaluate_tasks(model, test_loader),
-        }
-        history.append(row)
-        print(json.dumps(row))
-    result = {
-        "project": "EFU",
-        "configuration": vars(args),
-        "partitions": partitions,
-        "history": history,
-        "protocol": (
-            "decentralized-coordinate-fe"
-            if args.method == "efu" and args.aggregation == "encrypted"
-            else "plaintext-baseline"
-        ),
-        "benchmark_reproduction": False,
-        "data_manifest_sha256": manifest_digest(args.dataset, args.data_root),
-        "task_annotations": annotation_metadata,
-        "task_recipe": {
-            "source": "https://arxiv.org/html/2508.07873v1#S5.SS2",
-            "round_indexing": "one-based; unlearn_start is the first unlearning round",
-            "request_scope": "all clients, all local samples; forget-client/fraction are single-task options",
-            "loss_weights": {
-                "retain_gender": 1.0,
-                "forget_identity": 1.0,
-                "adversarial_identity": 1.0,
-                "inverted_mas": 1.0,
-            },
-            "optimizer": "Adam, weight_decay=0.01; paper section 5.1",
-            "mas_scope": "shared backbone and identity head; retained gender head excluded",
-            "attack": "targeted L2 APGD, eps=0.4, random incorrect identity, cached at request start per client",
-            "post_request": "gender-only learning; no identity supervision",
-            "baseline": "retrain starts from initialization using only gender; fedavg continues joint learning",
-        },
-        "environment": {
-            "python": platform.python_version(),
-            "platform": platform.platform(),
-            "torch": str(torch.__version__),
-            "numpy": np.__version__,
-        },
-    }
-    if args.output:
-        path = Path(args.output)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, indent=2) + "\n")
-        torch.save(
-            {
-                "model": {
-                    key: value.detach().cpu()
-                    for key, value in model.state_dict().items()
-                },
-                "configuration": vars(args),
-                "classes": {"identity": classes, "gender": 2},
-                "task_annotations": annotation_metadata,
-                "task_recipe": result["task_recipe"],
-            },
-            path.with_suffix(".pt"),
-        )
-    return result

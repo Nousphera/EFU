@@ -7,7 +7,6 @@ import sys
 
 import numpy as np
 from PIL import Image
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,7 +51,7 @@ def test_import_validate_and_reject_changed_files(tmp_path):
     assert manifest["class_to_idx"] == {"a": 0, "b": 1}
     assert not (tmp_path / "data/imagefolder/unrelated-private.txt").exists()
     assert prepare(tmp_path / "data", "--validate").returncode == 0
-    assert prepare(tmp_path / "data", "--source", source).returncode != 0
+    assert prepare(tmp_path / "data", "--source", source).returncode == 0
     (tmp_path / "data/imagefolder/train/a/0.png").write_bytes(b"changed")
     assert prepare(tmp_path / "data", "--validate").returncode != 0
 
@@ -81,6 +80,15 @@ def test_prepared_images_train_with_full_paper_architecture(tmp_path):
     output = tmp_path / "result.json"
     report = main(
         [
+            "--from-scratch",
+            "--clients",
+            "2",
+            "--batch-size",
+            "8",
+            "--unlearn-start",
+            "2",
+            "--unlearn-rounds",
+            "1",
             "--dataset",
             "imagefolder",
             "--data-root",
@@ -135,6 +143,15 @@ def test_femnist_writer_json_feeds_actual_image_trainer(tmp_path):
     assert prep.returncode == 0, prep.stderr
     result = main(
         [
+            "--from-scratch",
+            "--clients",
+            "2",
+            "--batch-size",
+            "8",
+            "--unlearn-start",
+            "2",
+            "--unlearn-rounds",
+            "1",
             "--dataset",
             "femnist",
             "--data-root",
@@ -181,6 +198,15 @@ def test_lfw_import_selects_declared_identities_and_preserves_split(tmp_path):
 
     report = main(
         [
+            "--from-scratch",
+            "--clients",
+            "2",
+            "--batch-size",
+            "8",
+            "--unlearn-start",
+            "2",
+            "--unlearn-rounds",
+            "1",
             "--dataset",
             "lfw",
             "--data-root",

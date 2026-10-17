@@ -1,36 +1,54 @@
-# Modified 2026-10-15: retain per-parameter gradients for inverted MAS importance.
-import copy
+"""Per-example MAS (EFU Eq. 1), with explicit normalization for inversion."""
 
 import torch
 
 
-def _compute_weight_importance(model, data):
-    model.train()
-    importance = {n: torch.zeros_like(p, device=model.device)
-                  for n, p in model.named_parameters() if p.requires_grad}
-    total_samples = 0
-    for x, _ in data:
-        x = x.to(model.device)
-        model.zero_grad()
-        logits = model(x)
-        logits.pow(2).sum().backward()
-        for name, param in model.named_parameters():
-            if name in importance and param.grad is not None:
-                importance[name] += param.grad.detach().abs()
-        total_samples += x.shape[0]
-    for n, i in importance.items():
-        importance[n] /= max(total_samples, 1)
-        lo, hi = i.min(), i.max()
-        if hi > lo:
-            importance[n] = (i - lo) / (hi - lo + 1e-8)
-        else:
-            importance[n] = torch.zeros_like(i)
-    return {n: 1 - i for n, i in importance.items()}      # inverted importance
+def per_example_importance(model, data, scalar, power):
+    """Accumulate before batching cancels gradients, preserving caller state."""
+    params = {n: p for n, p in model.named_parameters() if p.requires_grad}
+    if not params:
+        raise ValueError("Importance estimation requires trainable parameters")
+    modes = {module: module.training for module in model.modules()}
+    device = next(iter(params.values())).device
+    result = {n: torch.zeros_like(p, device="cpu") for n, p in params.items()}
+    count = 0
+    try:
+        model.eval()
+        with torch.enable_grad():
+            for xs, ys in data:
+                for x, y in zip(xs, ys):
+                    value = scalar(model(x.unsqueeze(0).to(device)), y.to(device))
+                    grads = torch.autograd.grad(
+                        value, tuple(params.values()), allow_unused=True
+                    )
+                    for (name, _), grad in zip(params.items(), grads):
+                        if grad is not None:
+                            result[name].add_(grad.detach().abs().pow(power).cpu())
+                    count += 1
+    finally:
+        for module, training in modes.items():
+            module.training = training
+    if not count:
+        raise ValueError("Importance dataset must be nonempty")
+    return {name: value / count for name, value in result.items()}
+
+
+def compute_mas_importance(model, data):
+    """Mean absolute derivative of squared output norm, using model logits."""
+    return per_example_importance(
+        model, data, lambda output, _: output.square().sum(), 1
+    )
 
 
 def get_weights_importance(model, data):
-    _model = copy.deepcopy(model).to(model.device)
-    importance = _compute_weight_importance(_model, data)
-    _model.to('cpu')
-    del _model
+    """Invert per-tensor min/max-normalized MAS; constant tensors receive one.
+
+    Per-tensor normalization is an explicit reconstruction convention: EFU
+    specifies inversion but does not provide a normalization formula.
+    """
+    importance = compute_mas_importance(model, data)
+    for name, value in importance.items():
+        lo, hi = value.min(), value.max()
+        normalized = (value - lo) / (hi - lo) if hi > lo else torch.zeros_like(value)
+        importance[name] = 1 - normalized
     return importance

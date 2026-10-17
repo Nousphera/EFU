@@ -1,64 +1,109 @@
-# Modified 2026-10-15: coordinate-labelled decentralized FE integration.
+"""Full floating-state clustering and authorized centroid aggregation."""
 
+import hashlib
+import json
 import numpy as np
 import torch
 from sklearn.cluster import KMeans
-from efu.coordinate_fe import setup
-
-_BUFFERS = ("running_mean", "running_var", "num_batches_tracked")
-
-
-def _is_weight(name):
-    return not any(b in name for b in _BUFFERS)
+from efu.centroid_fe import Config, Participant, Aggregator
 
 
 def _flatten(state):
-    keys, shapes, chunks = [], [], []
-    for k, v in state.items():
-        if _is_weight(k):
-            keys.append(k); shapes.append(tuple(v.shape))
-            chunks.append(v.detach().cpu().numpy().ravel())
-    return np.concatenate(chunks).astype(np.float64), keys, shapes
+    keys = [key for key, value in state.items() if value.is_floating_point()]
+    if not keys:
+        raise ValueError("No floating tensors to aggregate")
+    shapes = [tuple(state[key].shape) for key in keys]
+    vector = np.concatenate(
+        [state[key].detach().cpu().numpy().reshape(-1) for key in keys]
+    ).astype(np.float64)
+    if not np.isfinite(vector).all():
+        raise ValueError("Nonfinite model state")
+    return vector, keys, shapes
 
 
-def _unflatten(vec, keys, shapes):
-    out, i = {}, 0
-    for k, shape in zip(keys, shapes):
+def _unflatten(vector, keys, shapes):
+    out = {}
+    offset = 0
+    for key, shape in zip(keys, shapes):
         n = int(np.prod(shape)) if shape else 1
-        out[k] = torch.tensor(vec[i:i + n].reshape(shape), dtype=torch.float32); i += n
+        out[key] = torch.as_tensor(
+            np.asarray(vector[offset : offset + n]).reshape(shape), dtype=torch.float32
+        )
+        offset += n
+    if offset != len(vector):
+        raise ValueError("Model layout differs from vector size")
     return out
 
 
 def cluster(state, kappa, seed=0):
-    """Compress weights into (centroids Z[kappa], mapping P[d], keys, shapes)."""
-    vec, keys, shapes = _flatten(state)
-    km = KMeans(n_clusters=kappa, n_init=4, random_state=seed)
-    P = km.fit_predict(vec.reshape(-1, 1))
-    return km.cluster_centers_.ravel().astype(np.float64), P.astype(np.int64), keys, shapes
+    vector, keys, shapes = _flatten(state)
+    if type(kappa) != int or kappa < 1:
+        raise ValueError("kappa must be positive")
+    count = min(kappa, len(np.unique(vector)))
+    km = KMeans(n_clusters=count, n_init=4, random_state=seed)
+    mapping = km.fit_predict(vector[:, None])
+    return km.cluster_centers_.ravel(), mapping.astype(np.int64), keys, shapes
 
 
-def fe_secure_aggregate(dicts, num_samples, kappa=64, tag=b"efu", precision=3, max_abs=8.0, seed=0):
-    """Cluster then use coordinate-labelled decentralized FE.
+def quantized_contribution(state, kappa, precision, seed=0):
+    z, p, keys, shapes = cluster(state, kappa, seed)
+    out = _unflatten(np.rint(z * 10**precision)[p] / 10**precision, keys, shapes)
+    out.update(
+        {
+            key: value.detach().cpu().clone()
+            for key, value in state.items()
+            if not value.is_floating_point()
+        }
+    )
+    return out
 
-    Each client expands centroids to d coordinates and sends d ciphertexts.
-    See README.md. BatchNorm buffers are aggregated in plaintext.
-    """
-    if len(dicts) != len(num_samples):
-        raise ValueError("Each client must supply a sample count")
-    clustered = [cluster(sd, kappa, seed=seed) for sd in dicts]
+
+def fe_secure_aggregate(
+    dicts,
+    num_samples,
+    kappa=64,
+    tag=b"efu",
+    precision=3,
+    max_abs=32.0,
+    seed=0,
+    round_id=1,
+):
+    if not dicts or len(dicts) != len(num_samples):
+        raise ValueError("Each client needs a sample count")
+    layout = [(k, tuple(v.shape), v.dtype) for k, v in dicts[0].items()]
+    if any(
+        [(k, tuple(v.shape), v.dtype) for k, v in state.items()] != layout
+        for state in dicts
+    ):
+        raise ValueError("Client model layouts differ")
+    clustered = [cluster(state, kappa, seed) for state in dicts]
     keys, shapes = clustered[0][2:]
-    if any(item[2] != keys or item[3] != shapes for item in clustered):
-        raise ValueError("Clients must use identical state keys and shapes")
-    clients, server = setup(num_samples, dimension=len(clustered[0][1]), precision=precision, max_abs=max_abs)
-    messages = [client.encrypt(Z[P], round_id=1) for client,(Z,P,_,_) in zip(clients,clustered)]
-    flat = server.aggregate(messages, round_id=1)
-    agg = _unflatten(flat, keys, shapes)
-    total = sum(num_samples)
-    for k,v in dicts[0].items():
-        if _is_weight(k):
-            continue
-        if "num_batches_tracked" in k:
-            agg[k] = max(sd[k] for sd in dicts)
-        else:
-            agg[k] = sum(sd[k].float() * (w / total) for sd,w in zip(dicts,num_samples))
-    return agg
+    digest = hashlib.sha256(
+        json.dumps([keys, shapes], separators=(",", ":")).encode()
+    ).hexdigest()
+    cfg = Config.create(
+        num_samples,
+        dimension=len(clustered[0][1]),
+        kappa=kappa,
+        precision=precision,
+        max_abs=max_abs,
+        round_id=round_id,
+        layout_digest=digest,
+    )
+    clients = [Participant(cfg, i) for i in range(len(dicts))]
+    peers = {i: client.public_key() for i, client in enumerate(clients)}
+    messages = []
+    for client, (z, p, _, _) in zip(clients, clustered):
+        client.set_peers(peers)
+        messages.append(client.encrypt(z, p))
+    server = Aggregator(cfg, peers)
+    chunks = (
+        (request, [client.authorize(request) for client in clients])
+        for request in server.request_chunks(messages, [item[1] for item in clustered])
+    )
+    result = server.aggregate_chunks(messages, chunks)
+    out = _unflatten(result, keys, shapes)
+    for key, value in dicts[0].items():
+        if not value.is_floating_point():
+            out[key] = torch.stack([state[key].cpu() for state in dicts]).amax(0)
+    return out

@@ -1,3 +1,10 @@
-# Install the bundled cryptographic implementation before the project.
-./modules/mife
--e .[test]
+torch==2.8.0
+torchvision==0.23.0
+numpy>=2.2,<3
+scikit-learn>=1.6,<1.8
+flwr[simulation]==1.40.0
+fastecdsa>=3,<4
+pycryptodome>=3.23,<4
+tomli-w>=1.2,<2
+pytest>=8,<10
+-e .

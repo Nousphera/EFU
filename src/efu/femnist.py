@@ -1,6 +1,5 @@
 """LEAF FEMNIST 28x28 JSON adapter retaining writer identities and integer labels."""
 
-import hashlib
 import json
 from pathlib import Path
 import numpy as np
@@ -13,6 +12,38 @@ class FEMNIST(Dataset):
         self.transform = transform
         self.classes = [str(i) for i in range(62)]
         self.class_to_idx = {name: i for i, name in enumerate(self.classes)}
+        directory = Path(root)
+        if (directory / "images.npy").is_file():
+            self.images = np.load(
+                directory / "images.npy", mmap_mode="r", allow_pickle=False
+            )
+            self.targets = np.load(
+                directory / "labels.npy", mmap_mode="r", allow_pickle=False
+            )
+            metadata = json.loads((directory / "records.json").read_text())
+            writers = metadata.get("writers", [])
+            self.sample_ids = metadata.get("sample_ids", [])
+            if (
+                metadata.get("schema_version") != 1
+                or self.images.dtype != np.uint8
+                or self.images.shape != (len(self.targets), 28, 28)
+                or len(self.targets) == 0
+                or self.targets.dtype.kind not in "iu"
+                or self.targets.min() < 0
+                or self.targets.max() > 61
+                or len(writers) != len(self.targets)
+                or any(not isinstance(w, str) for w in writers)
+                or len(self.sample_ids) != len(self.targets)
+                or any(not isinstance(key, str) for key in self.sample_ids)
+                or len(set(self.sample_ids)) != len(self.targets)
+            ):
+                raise ValueError("Invalid prepared FEMNIST arrays or sample identities")
+            self.users = sorted(set(writers))
+            groups = {user: [] for user in self.users}
+            for index, user in enumerate(writers):
+                groups[user].append(index)
+            self.user_indices = [groups[user] for user in self.users]
+            return
         records = {}
         for path in sorted(Path(root).glob("*.json")):
             data = json.loads(path.read_text())
@@ -70,7 +101,11 @@ class FEMNIST(Dataset):
 
     def __getitem__(self, index):
         # LEAF pixels are [0,1]. Convert to RGB for the existing torchvision models.
-        pixels = np.rint(self.images[index].reshape(28, 28) * 255).astype(np.uint8)
+        pixels = (
+            self.images[index]
+            if self.images.dtype == np.uint8
+            else np.rint(self.images[index].reshape(28, 28) * 255).astype(np.uint8)
+        )
         image = Image.fromarray(pixels).convert("RGB")
         return (self.transform(image) if self.transform else image), int(
             self.targets[index]

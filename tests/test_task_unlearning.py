@@ -1,7 +1,6 @@
 """Identity-forgetting / supplied gender-retention route from paper section 5.2."""
 
 import csv
-import json
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +33,7 @@ def lfw_fixture(root):
 
 def test_annotation_import_is_explicit_complete_and_integrity_checked(tmp_path):
     from efu.dataset_io import prepare_dataset, validate_dataset, load_prepared
-    from efu.task_unlearning import attach_task_labels
+    from efu.task_data import attach_task_labels
     from torchvision.transforms import ToTensor
 
     source, annotations = lfw_fixture(tmp_path)
@@ -160,7 +159,35 @@ def test_retained_only_training_never_updates_identity_head():
     assert not torch.equal(gender, model.gender_head.weight)
 
 
-def test_primary_task_path_runs_full_resnet_all_phases_with_plaintext_control(tmp_path, monkeypatch):
+@pytest.mark.parametrize("method", ["pgd", "sga_ewc"])
+def test_task_baselines_keep_retained_head_training_and_fixed_identity_reference(
+    method,
+):
+    from efu.task_unlearning import (
+        DualHeadModel,
+        prepare_task_baseline,
+        unlearn_task_baseline,
+        IdentityView,
+    )
+    from efu.utils.baselines import parameter_reference
+
+    model = DualHeadModel("resnet18", 2, pretrained=False)
+    data = DataLoader(
+        TensorDataset(torch.rand(2, 3, 224, 224), torch.tensor([[0, 0], [1, 1]])),
+        batch_size=2,
+    )
+    reference = parameter_reference(IdentityView(model))
+    prepared = prepare_task_baseline(model, data, method, reference=reference)
+    before = model.gender_head.weight.detach().clone()
+    unlearn_task_baseline(model, prepared, method, epochs=1, lr=0.001)
+    assert not torch.equal(before, model.gender_head.weight)
+    for name, value in reference.items():
+        torch.testing.assert_close(prepared["reference"][name], value)
+
+
+def test_primary_task_path_runs_full_resnet_all_phases_with_plaintext_control(
+    tmp_path, monkeypatch
+):
     from efu.dataset_io import prepare_dataset
     from efu.train import main
     from efu import task_unlearning
@@ -192,6 +219,11 @@ def test_primary_task_path_runs_full_resnet_all_phases_with_plaintext_control(tm
     output = tmp_path / "task.json"
     result = main(
         [
+            "--from-scratch",
+            "--batch-size",
+            "8",
+            "--unlearn-epochs",
+            "1",
             "--task",
             "identity-gender",
             "--dataset",
@@ -268,11 +300,14 @@ def test_held_out_metrics_route_both_heads_and_weight_uneven_batches():
     from efu.task_unlearning import evaluate_tasks
 
     from efu.task_unlearning import DualHeadModel
+
     model = DualHeadModel("resnet18", 3).eval()
     images = torch.rand(5, 3, 224, 224)
     with torch.no_grad():
         logits = model(images)
-    labels = torch.stack([logits[name].argmax(1) for name in ("identity", "gender")], dim=1)
+    labels = torch.stack(
+        [logits[name].argmax(1) for name in ("identity", "gender")], dim=1
+    )
     labels[3:, 0] = (labels[3:, 0] + 1) % 3
     labels[4:, 1] = 1 - labels[4:, 1]
     data = DataLoader(TensorDataset(images, labels), batch_size=2)
@@ -297,6 +332,9 @@ def test_task_path_rejects_partial_cohort_and_missing_annotations(tmp_path):
     with pytest.raises(ValueError, match="annotation|tasks.json"):
         main(
             [
+                "--from-scratch",
+                "--clients",
+                "2",
                 "--task",
                 "identity-gender",
                 "--dataset",
@@ -322,10 +360,36 @@ def test_supported_image_backbones_share_features_with_two_real_heads(name, size
     assert all(torch.isfinite(value).all() for value in result.values())
 
 
-def test_gender_only_retraining_control_uses_no_identity_supervision():
+def test_gender_only_retraining_control_uses_no_identity_supervision(tmp_path):
     from efu.train import main
+    from efu.dataset_io import prepare_dataset
 
-    result = main(["--task", "identity-gender", "--method", "retrain", "--rounds", "2", "--samples-per-client", "2"])
+    source, annotations = lfw_fixture(tmp_path)
+    root = tmp_path / "data"
+    prepare_dataset(
+        "lfw", root, source=source, identities=2, gender_annotations=annotations
+    )
+    result = main(
+        [
+            "--task",
+            "identity-gender",
+            "--dataset",
+            "lfw",
+            "--data-root",
+            str(root),
+            "--from-scratch",
+            "--clients",
+            "2",
+            "--alpha",
+            "10",
+            "--batch-size",
+            "8",
+            "--method",
+            "retrain",
+            "--rounds",
+            "2",
+        ]
+    )
     assert all(
         row["phase"] == "gender-only" and not row["unlearning_clients"]
         for row in result["history"]

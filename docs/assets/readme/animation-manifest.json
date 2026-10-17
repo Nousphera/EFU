@@ -1,0 +1,80 @@
+{
+  "source": "https://arxiv.org/pdf/2508.07873v1",
+  "walkthrough": "https://nousphera.github.io/projects/efu/",
+  "scene_order": [
+    "Local choice",
+    "Unlearn",
+    "Encrypt",
+    "Expand",
+    "Bind keys",
+    "Broadcast"
+  ],
+  "seconds_per_scene": 5,
+  "frames_per_second": 10,
+  "artifacts": [
+    {
+      "file": "method-dark-mobile.gif",
+      "bytes": 1218772,
+      "sha256": "a5f37aba69d6f8a4e8bf9d1e5ed4fc708239a7e3dac97f910a87cc1f886f3be9",
+      "width": 840,
+      "height": 1568,
+      "r_frame_rate": "10/1",
+      "nb_frames": "300",
+      "duration_seconds": 30,
+      "loop": "infinite"
+    },
+    {
+      "file": "method-dark.gif",
+      "bytes": 615678,
+      "sha256": "9e72c5e837e6f5f915cca8c44c6c3eccaffaf569744b716358186042cfadd599",
+      "width": 960,
+      "height": 732,
+      "r_frame_rate": "10/1",
+      "nb_frames": "300",
+      "duration_seconds": 30,
+      "loop": "infinite"
+    },
+    {
+      "file": "method-dark.mp4",
+      "bytes": 271282,
+      "sha256": "f25d99ec266898f888424d50c324f328d1d8b5a02d98f621beb7f217e5061851",
+      "width": 960,
+      "height": 732,
+      "r_frame_rate": "10/1",
+      "nb_frames": "300",
+      "duration_seconds": 30
+    },
+    {
+      "file": "method-light-mobile.gif",
+      "bytes": 1335160,
+      "sha256": "e68289c6c3b079a3085c91a411a69adeae8f84ef87a4cb8b8228c83e9a932f57",
+      "width": 840,
+      "height": 1568,
+      "r_frame_rate": "10/1",
+      "nb_frames": "300",
+      "duration_seconds": 30,
+      "loop": "infinite"
+    },
+    {
+      "file": "method-light.gif",
+      "bytes": 606181,
+      "sha256": "2df441b2170937ff3017a47f400b944988e855c8bf0ad21fcfbc61e772a8557a",
+      "width": 960,
+      "height": 732,
+      "r_frame_rate": "10/1",
+      "nb_frames": "300",
+      "duration_seconds": 30,
+      "loop": "infinite"
+    },
+    {
+      "file": "method-light.mp4",
+      "bytes": 280738,
+      "sha256": "b5243ca543991c30d65655ccd84b55567cf5b143ba177d5f6190541c83fec413",
+      "width": 960,
+      "height": 732,
+      "r_frame_rate": "10/1",
+      "nb_frames": "300",
+      "duration_seconds": 30
+    }
+  ]
+}

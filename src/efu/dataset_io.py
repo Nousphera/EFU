@@ -16,17 +16,14 @@ from PIL import Image
 from torchvision import datasets as D
 from torchvision.datasets.folder import IMG_EXTENSIONS
 
+PAPER_DATASETS = ("cifar10", "lfw", "femnist")
 DATASETS = ("cifar10", "cifar100", "lfw", "femnist", "imagefolder")
-FOLDERS = ("imagefolder", "lfw", "eurosat", "cars196")
+FOLDERS = ("imagefolder", "lfw")
 SOURCES = {
     "cifar10": "https://www.cs.toronto.edu/~kriz/cifar.html",
     "cifar100": "https://www.cs.toronto.edu/~kriz/cifar.html",
     "femnist": "https://github.com/TalwalkarLab/leaf/tree/master/data/femnist",
     "lfw": "https://vis-www.cs.umass.edu/lfw/",
-    "svhn": "http://ufldl.stanford.edu/housenumbers/",
-    "fashion-mnist": "https://github.com/zalandoresearch/fashion-mnist",
-    "emnist": "https://www.nist.gov/itl/products-and-services/emnist-dataset",
-    "food101": "https://data.vision.ee.ethz.ch/cvl/datasets_extra/food-101/",
 }
 
 
@@ -57,34 +54,29 @@ def labels(dataset):
     return np.asarray([label for _, label in dataset.samples], dtype=np.int64)
 
 
-def open_dataset(name, root, transform=None, download=False):
+def open_dataset(name, root, transform=None, download=False, *, test_transform=None):
     """root is the dataset directory, e.g. data/cifar10, not its parent."""
     root = Path(root)
-    if name in ("cifar10", "cifar100", "fashion-mnist", "emnist"):
+    test_transform = transform if test_transform is None else test_transform
+    if name in ("cifar10", "cifar100"):
         cls = {
             "cifar10": D.CIFAR10,
             "cifar100": D.CIFAR100,
-            "fashion-mnist": D.FashionMNIST,
-            "emnist": D.EMNIST,
         }[name]
-        extra = {"split": "balanced"} if name == "emnist" else {}
-        train = cls(root, train=True, transform=transform, download=download, **extra)
-        test = cls(root, train=False, transform=transform, download=download, **extra)
-    elif name in ("svhn", "food101"):
-        cls = D.SVHN if name == "svhn" else D.Food101
-        train = cls(root, split="train", transform=transform, download=download)
-        test = cls(root, split="test", transform=transform, download=download)
+        train = cls(root, train=True, transform=transform, download=download)
+        test = cls(root, train=False, transform=test_transform, download=download)
     elif name in FOLDERS:
         if download:
             raise ValueError(f"{name} requires user-acquired --source data")
         train = D.ImageFolder(root / "train", transform=transform)
-        test = D.ImageFolder(root / "test", transform=transform)
+        test = D.ImageFolder(root / "test", transform=test_transform)
         if train.class_to_idx != test.class_to_idx:
             raise ValueError("Train/test class directories differ")
     elif name == "femnist":
         from .femnist import FEMNIST
 
-        train, test = [FEMNIST(root / split, transform) for split in ("train", "test")]
+        train = FEMNIST(root / "train", transform)
+        test = FEMNIST(root / "test", test_transform)
     else:
         raise ValueError(f"Unknown dataset: {name}")
     return train, test
@@ -120,6 +112,12 @@ def describe(name, root, *, verify_images=False):
                     image.load()
                 hashes.add(digest(filename))
             image_hashes.append(hashes)
+    if (
+        name == "femnist"
+        and hasattr(train, "sample_ids")
+        and set(train.sample_ids) & set(test.sample_ids)
+    ):
+        raise ValueError("FEMNIST source sample appears in both train and test")
     if len(image_hashes) == 2 and image_hashes[0] & image_hashes[1]:
         raise ValueError("Exact duplicate image content appears in train and test")
     return {"class_to_idx": class_to_idx, "splits": splits}
@@ -144,7 +142,7 @@ def validate_dataset(name, root):
     return manifest
 
 
-def load_prepared(name, root, transform=None):
+def load_prepared(name, root, transform=None, *, test_transform=None):
     directory = Path(root) / name
     path = directory / "manifest.json"
     if not path.is_file():
@@ -152,7 +150,10 @@ def load_prepared(name, root, transform=None):
     manifest = json.loads(path.read_text())
     if manifest.get("schema_version") != 1 or manifest.get("dataset") != name:
         raise ValueError("Manifest schema/dataset mismatch")
-    train, test = open_dataset(name, directory, transform=transform)
+    validate_dataset(name, root)
+    train, test = open_dataset(
+        name, directory, transform=transform, test_transform=test_transform
+    )
     for split, dataset in (("train", train), ("test", test)):
         y = labels(dataset)
         if (
@@ -168,7 +169,7 @@ def load_prepared(name, root, transform=None):
 
 
 def manifest_digest(name, root):
-    return None if name == "synthetic" else digest(Path(root) / name / "manifest.json")
+    return digest(Path(root) / name / "manifest.json")
 
 
 def copy_source(name, source, stage):
@@ -176,10 +177,6 @@ def copy_source(name, source, stage):
     entries = {
         "cifar10": ["cifar-10-batches-py"],
         "cifar100": ["cifar-100-python"],
-        "svhn": ["train_32x32.mat", "test_32x32.mat"],
-        "fashion-mnist": ["FashionMNIST"],
-        "emnist": ["EMNIST"],
-        "food101": ["food-101"],
     }.get(name, ["train", "test"])
     stage.mkdir()
     for entry in entries:
@@ -212,12 +209,35 @@ def prepare_dataset(
         raise ValueError(f"Unsupported dataset: {name}")
     parent = Path(root)
     destination = parent / name
+    if source and download:
+        raise ValueError("Choose --source or --download, not both")
     if destination.exists():
-        raise FileExistsError(
-            f"{destination} exists; use --validate or choose another root"
-        )
-    if bool(source) == bool(download):
-        raise ValueError("Choose exactly one of --source or --download")
+        existing = validate_dataset(name, root)
+        if name == "lfw" and any(
+            existing["preparation"].get(k) != v
+            for k, v in {
+                "identities": identities,
+                "split_seed": split_seed,
+                "test_fraction": test_fraction,
+            }.items()
+        ):
+            raise ValueError(
+                "Existing LFW split differs from requested configuration; choose another root"
+            )
+        if name == "femnist" and existing["preparation"].get("mode") == "download":
+            requested = {"split_seed": split_seed, "test_fraction": test_fraction}
+            if any(existing["preparation"].get(k) != v for k, v in requested.items()):
+                raise ValueError(
+                    "Existing FEMNIST split differs from requested configuration; choose another root"
+                )
+        if gender_annotations is not None:
+            expected = existing.get("tasks", {}).get("annotation_sha256")
+            if expected != digest(gender_annotations):
+                raise ValueError(
+                    "Existing LFW annotations differ or are absent; choose a new output root"
+                )
+        return existing
+    download = source is None
     if source and (
         Path(source).resolve() == parent.resolve()
         or Path(source).resolve() in parent.resolve().parents
@@ -244,12 +264,36 @@ def prepare_dataset(
                 copy_source(name, source, stage)
                 (stage / "manifest.json").unlink(missing_ok=True)
         else:
-            if name in FOLDERS or name == "femnist":
-                raise ValueError(
-                    f"{name} requires --source; see dataset acquisition instructions"
+            if name == "lfw":
+                from .acquisition import acquire_lfw
+
+                source, provenance = acquire_lfw(parent / "raw")
+                prepare_lfw(source, stage, identities, split_seed, test_fraction)
+                preparation.update(
+                    provenance,
+                    identities=identities,
+                    split_seed=split_seed,
+                    test_fraction=test_fraction,
+                    selection="most-images-first; ties by identity name",
                 )
-            stage.mkdir()
-            open_dataset(name, stage, download=True)
+            elif name == "femnist":
+                from .acquisition import acquire_femnist
+
+                preparation.update(
+                    acquire_femnist(
+                        parent / "raw",
+                        stage,
+                        seed=split_seed,
+                        test_fraction=test_fraction,
+                    )
+                )
+            elif name in FOLDERS:
+                raise ValueError(
+                    f"{name} requires --source train/ and test/ image folders"
+                )
+            else:
+                stage.mkdir()
+                open_dataset(name, stage, download=True)
         task_metadata = None
         if gender_annotations is not None:
             from .task_data import prepare_gender_annotations
@@ -307,14 +351,16 @@ def prepare_lfw(source, stage, identities, seed, fraction):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", required=True, choices=DATASETS)
+    parser.add_argument(
+        "--dataset", choices=DATASETS, help="Omit to prepare all paper datasets"
+    )
     parser.add_argument(
         "--root",
         type=Path,
         default=Path("data"),
         help="Parent root used by the trainer; output is ROOT/DATASET",
     )
-    mode = parser.add_mutually_exclusive_group(required=True)
+    mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--source",
         type=Path,
@@ -349,29 +395,35 @@ def main(argv=None):
         parser.error(
             "--validate checks saved annotations; use a new output root to import annotations"
         )
-    try:
-        if args.validate:
-            result = validate_dataset(args.dataset, args.root)
-        else:
-            result = prepare_dataset(
-                args.dataset,
-                args.root,
-                source=args.source,
-                download=args.download,
-                identities=getattr(args, "identities", 30),
-                split_seed=getattr(args, "split_seed", 2025),
-                test_fraction=getattr(args, "test_fraction", 0.2),
-                gender_annotations=getattr(args, "gender_annotations", None),
+    if args.source and args.dataset is None:
+        parser.error("--source requires one --dataset")
+    reports, failures = [], []
+    for name in (args.dataset,) if args.dataset else PAPER_DATASETS:
+        try:
+            if args.validate:
+                result = validate_dataset(name, args.root)
+            else:
+                options = dict(
+                    source=args.source,
+                    download=args.download,
+                    identities=getattr(args, "identities", 30),
+                    split_seed=getattr(args, "split_seed", 2025),
+                    test_fraction=getattr(args, "test_fraction", 0.2),
+                )
+                options["gender_annotations"] = getattr(
+                    args, "gender_annotations", None
+                )
+                result = prepare_dataset(name, args.root, **options)
+            reports.append(
+                {
+                    "dataset": name,
+                    "root": str(args.root / name),
+                    "splits": result["splits"],
+                }
             )
-    except (ValueError, OSError, RuntimeError, KeyError) as exc:
-        parser.exit(2, f"Dataset preparation failed: {exc}\n")
-    print(
-        json.dumps(
-            {
-                "dataset": args.dataset,
-                "root": str(args.root / args.dataset),
-                "splits": result["splits"],
-            },
-            indent=2,
-        )
-    )
+        except (ValueError, OSError, RuntimeError, KeyError) as exc:
+            failures.append(f"{name}: {exc}")
+    print(json.dumps(reports, indent=2))
+    if failures:
+        parser.exit(2, "Dataset preparation failed:\n" + "\n".join(failures) + "\n")
+    return reports

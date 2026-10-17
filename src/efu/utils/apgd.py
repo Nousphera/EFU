@@ -4,40 +4,69 @@ import torch
 from torch import Tensor
 
 
-def difference_of_logits(logits: Tensor, labels: Tensor, labels_infhot: Optional[Tensor] = None) -> Tensor:
+def difference_of_logits(
+    logits: Tensor, labels: Tensor, labels_infhot: Optional[Tensor] = None
+) -> Tensor:
     if labels_infhot is None:
-        labels_infhot = torch.zeros_like(logits).scatter_(1, labels.unsqueeze(1), float('inf'))
+        labels_infhot = torch.zeros_like(logits).scatter_(
+            1, labels.unsqueeze(1), float("inf")
+        )
 
     class_logits = logits.gather(1, labels.unsqueeze(1)).squeeze(1)
     other_logits = (logits - labels_infhot).amax(dim=1)
     return class_logits - other_logits
 
 
-def difference_of_logits_ratio(logits: Tensor, labels: Tensor, labels_infhot: Optional[Tensor] = None, targeted: bool = False, ε: float = 0) -> Tensor:
+def difference_of_logits_ratio(
+    logits: Tensor,
+    labels: Tensor,
+    labels_infhot: Optional[Tensor] = None,
+    targeted: bool = False,
+    ε: float = 0,
+) -> Tensor:
     """Difference of Logits Ratio from https://arxiv.org/abs/2003.01690. This version is modified such that the DLR is
     always positive if argmax(logits) == labels"""
-    logit_dists = difference_of_logits(logits=logits, labels=labels, labels_infhot=labels_infhot)
+    logit_dists = difference_of_logits(
+        logits=logits, labels=labels, labels_infhot=labels_infhot
+    )
 
     if targeted:
         top4_logits = torch.topk(logits, k=4, dim=1).values
-        logit_normalization = top4_logits[:, 0] - (top4_logits[:, -2] + top4_logits[:, -1]) / 2
+        logit_normalization = (
+            top4_logits[:, 0] - (top4_logits[:, -2] + top4_logits[:, -1]) / 2
+        )
     else:
         top3_logits = torch.topk(logits, k=3, dim=1).values
         logit_normalization = top3_logits[:, 0] - top3_logits[:, -1]
 
     return (logit_dists + ε) / (logit_normalization + 1e-8)
 
+
 # Adapted from https://github.com/fra31/auto-attack
 import math
 import numbers
 from functools import partial
 from typing import Tuple, Optional, Union
-import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
 
-def apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Union[float, Tensor], norm: float, targeted: bool = False,
-    n_iter: int = 100, n_restarts: int = 1, loss_function: str = 'dlr', eot_iter: int = 1, rho: float = 0.75, use_large_reps: bool = False, use_rs: bool = True, best_loss: bool = False) -> Tensor:
+
+def apgd(
+    model: nn.Module,
+    inputs: Tensor,
+    labels: Tensor,
+    eps: Union[float, Tensor],
+    norm: float,
+    targeted: bool = False,
+    n_iter: int = 100,
+    n_restarts: int = 1,
+    loss_function: str = "dlr",
+    eot_iter: int = 1,
+    rho: float = 0.75,
+    use_large_reps: bool = False,
+    use_rs: bool = True,
+    best_loss: bool = False,
+) -> Tensor:
     """
     Auto-PGD (APGD) attack from https://arxiv.org/abs/2003.01690 with L1 variant from https://arxiv.org/abs/2103.01208.
 
@@ -80,7 +109,7 @@ def apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Union[float, Ten
         Modified inputs to be adversarial to the model.
 
     """
-    assert norm in [1, 2, float('inf')]
+    assert norm in [1, 2, float("inf")]
     device = inputs.device
     batch_size = len(inputs)
 
@@ -95,13 +124,23 @@ def apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Union[float, Ten
         iters = [math.ceil(i) for i in iters]
         iters[-1] = n_iter - sum(iters[:-1])
 
-    apgd_attack = partial(_apgd, model=model, norm=norm, targeted=targeted, loss_function=loss_function, eot_iter=eot_iter, rho=rho)
+    apgd_attack = partial(
+        _apgd,
+        model=model,
+        norm=norm,
+        targeted=targeted,
+        loss_function=loss_function,
+        eot_iter=eot_iter,
+        rho=rho,
+    )
 
     if best_loss:
-        loss = torch.full_like(adv_found, -float('inf'), dtype=torch.float)
+        loss = torch.full_like(adv_found, -float("inf"), dtype=torch.float)
 
         for _ in range(n_restarts):
-            adv_inputs_run, adv_found_run, loss_run, _ = apgd_attack(inputs=inputs, labels=labels, eps=eps)
+            adv_inputs_run, adv_found_run, loss_run, _ = apgd_attack(
+                inputs=inputs, labels=labels, eps=eps, n_iter=n_iter
+            )
             better_loss = loss_run > loss
             adv_inputs[better_loss] = adv_inputs_run[better_loss]
             loss[better_loss] = loss_run[better_loss]
@@ -119,20 +158,36 @@ def apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Union[float, Ten
                 assert norm == 1
                 if use_rs:
                     x_init = inputs_to_attack + torch.randn_like(inputs_to_attack)
-                    x_init += l1_projection(inputs_to_attack, x_init - inputs_to_attack, epss[0][to_attack])
+                    x_init += l1_projection(
+                        inputs_to_attack, x_init - inputs_to_attack, epss[0][to_attack]
+                    )
                 else:
                     x_init = None
 
                 for eps_, iter in zip(epss, iters):
                     eps_to_attack = eps_[to_attack]
                     if x_init is not None:
-                        x_init += l1_projection(inputs_to_attack, x_init - inputs_to_attack, eps_to_attack)
-                    x_init, adv_found_run, _, adv_inputs_run = apgd_attack(inputs=inputs_to_attack, labels=labels_to_attack, eps=eps_to_attack, x_init=x_init, n_iter=iter)
+                        x_init += l1_projection(
+                            inputs_to_attack, x_init - inputs_to_attack, eps_to_attack
+                        )
+                    x_init, adv_found_run, _, adv_inputs_run = apgd_attack(
+                        inputs=inputs_to_attack,
+                        labels=labels_to_attack,
+                        eps=eps_to_attack,
+                        x_init=x_init,
+                        n_iter=iter,
+                    )
             else:
-                _, adv_found_run, _, adv_inputs_run = apgd_attack(inputs=inputs_to_attack, labels=labels_to_attack, eps=eps[to_attack], n_iter=n_iter)
+                _, adv_found_run, _, adv_inputs_run = apgd_attack(
+                    inputs=inputs_to_attack,
+                    labels=labels_to_attack,
+                    eps=eps[to_attack],
+                    n_iter=n_iter,
+                )
             adv_inputs[to_attack] = adv_inputs_run
             adv_found[to_attack] = adv_found_run
     return adv_inputs
+
 
 def l1_projection(x: Tensor, y: Tensor, eps: Tensor) -> Tensor:
     device = x.device
@@ -165,27 +220,53 @@ def l1_projection(x: Tensor, y: Tensor, eps: Tensor) -> Tensor:
         d[c5] = -torch.min(torch.max(-u[c5], alpha.unsqueeze(-1)), -l[c5])
     return d.mul_(y.sign()).view(shape)
 
+
 def check_oscillation(loss_steps: Tensor, j: int, k: int, k3: float = 0.75) -> Tensor:
     t = torch.zeros_like(loss_steps[0])
     for counter5 in range(k):
         t.add_(loss_steps[j - counter5] > loss_steps[j - counter5 - 1])
     return t <= k * k3
 
-def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: float, x_init: Optional[Tensor] = None, targeted: bool = False,
-    n_iter: int = 100, loss_function: str = 'dlr', eot_iter: int = 1, rho: float = 0.75) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-    _loss_functions = {'ce': (nn.CrossEntropyLoss(reduction='none'), -1 if targeted else 1), 'dlr': (partial(difference_of_logits_ratio, targeted=targeted), 1 if targeted else -1),}
+
+def _apgd(
+    model: nn.Module,
+    inputs: Tensor,
+    labels: Tensor,
+    eps: Tensor,
+    norm: float,
+    x_init: Optional[Tensor] = None,
+    targeted: bool = False,
+    n_iter: int = 100,
+    loss_function: str = "dlr",
+    eot_iter: int = 1,
+    rho: float = 0.75,
+) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    _loss_functions = {
+        "ce": (nn.CrossEntropyLoss(reduction="none"), -1 if targeted else 1),
+        "dlr": (
+            partial(difference_of_logits_ratio, targeted=targeted),
+            1 if targeted else -1,
+        ),
+    }
     device = inputs.device
     batch_size = len(inputs)
     batch_view = lambda tensor: tensor.view(-1, *[1] * (inputs.ndim - 1))
     criterion_indiv, multiplier = _loss_functions[loss_function.lower()]
-    lower, upper = (inputs - batch_view(eps)).clamp_(min=0, max=1), (inputs + batch_view(eps)).clamp_(min=0, max=1)
-    n_iter_2, n_iter_min, size_decr = max(int(0.22 * n_iter), 1), max(int(0.06 * n_iter), 1), max(int(0.03 * n_iter), 1)
+    lower, upper = (
+        (inputs - batch_view(eps)).clamp_(min=0, max=1),
+        (inputs + batch_view(eps)).clamp_(min=0, max=1),
+    )
+    n_iter_2, n_iter_min, size_decr = (
+        max(int(0.22 * n_iter), 1),
+        max(int(0.06 * n_iter), 1),
+        max(int(0.03 * n_iter), 1),
+    )
 
     if x_init is not None:
         x_adv = x_init.clone()
-    elif norm == float('inf'):
+    elif norm == float("inf"):
         t = 2 * torch.rand_like(inputs) - 1
-        x_adv = inputs + t * batch_view(eps / t.flatten(1).norm(p=float('inf'), dim=1))
+        x_adv = inputs + t * batch_view(eps / t.flatten(1).norm(p=float("inf"), dim=1))
     elif norm == 2:
         t = torch.randn_like(inputs)
         x_adv = inputs + t * batch_view(eps / t.flatten(1).norm(p=2, dim=1))
@@ -212,11 +293,13 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
     grad_best = grad.clone()
     x_adv.detach_()
 
-    adv_found = (logits.argmax(1) == labels) if targeted else (logits.argmax(1) != labels)
+    adv_found = (
+        (logits.argmax(1) == labels) if targeted else (logits.argmax(1) != labels)
+    )
     adv_found_steps[0] = adv_found
     loss_best = loss_indiv.detach().clone()
 
-    alpha = 2 if norm in [2, float('inf')] else 1 if norm == 1 else 2e-2
+    alpha = 2 if norm in [2, float("inf")] else 1 if norm == 1 else 2e-2
     step_size = alpha * eps
     x_adv_old = x_adv.clone()
     k = n_iter_2
@@ -232,7 +315,7 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
             sp_old = (x_adv - inputs).flatten(1).norm(p=0, dim=1)
             topk = sp_old / n_fts / 1.5
         adasp_redstep = 1.5
-        adasp_minstep = 10.
+        adasp_minstep = 10.0
 
     loss_best_last_check = loss_best.clone()
     reduced_last_check = torch.zeros_like(loss_best, dtype=torch.bool)
@@ -244,25 +327,40 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
 
         a = 0.75 if i else 1.0
 
-        if norm == float('inf'):
+        if norm == float("inf"):
             x_adv_1 = x_adv.addcmul(batch_view(step_size), torch.sign(grad))
-            torch.minimum(torch.maximum(x_adv_1, lower, out=x_adv_1), upper, out=x_adv_1)
+            torch.minimum(
+                torch.maximum(x_adv_1, lower, out=x_adv_1), upper, out=x_adv_1
+            )
 
             # momentum
             x_adv_1.lerp_(x_adv, weight=1 - a).add_(grad2, alpha=1 - a)
-            torch.minimum(torch.maximum(x_adv_1, lower, out=x_adv_1), upper, out=x_adv_1)
+            torch.minimum(
+                torch.maximum(x_adv_1, lower, out=x_adv_1), upper, out=x_adv_1
+            )
 
         elif norm == 2:
-            delta = x_adv.addcmul(grad, batch_view(step_size / grad.flatten(1).norm(p=2, dim=1).add_(1e-12)))
+            delta = x_adv.addcmul(
+                grad,
+                batch_view(step_size / grad.flatten(1).norm(p=2, dim=1).add_(1e-12)),
+            )
             delta.sub_(inputs)
             delta_norm = delta.flatten(1).norm(p=2, dim=1).add_(1e-12)
-            x_adv_1 = delta.mul_(batch_view(torch.min(delta_norm, eps).div_(delta_norm))).add_(inputs).clamp_(min=0,max=1)
+            x_adv_1 = (
+                delta.mul_(batch_view(torch.min(delta_norm, eps).div_(delta_norm)))
+                .add_(inputs)
+                .clamp_(min=0, max=1)
+            )
 
             # momentum
             delta = x_adv_1.lerp_(x_adv, weight=1 - a).add_(grad2, alpha=1 - a)
             delta.sub_(inputs)
             delta_norm = delta.flatten(1).norm(p=2, dim=1).add_(1e-12)
-            x_adv_1 = delta.mul_(batch_view(torch.min(delta_norm, eps).div_(delta_norm))).add_(inputs).clamp_(min=0, max=1)
+            x_adv_1 = (
+                delta.mul_(batch_view(torch.min(delta_norm, eps).div_(delta_norm)))
+                .add_(inputs)
+                .clamp_(min=0, max=1)
+            )
 
         elif norm == 1:
             grad_abs = grad.abs()
@@ -272,7 +370,12 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
             grad.mul_(grad_abs >= batch_view(grad_topk))
             grad_sign = grad.sign()
 
-            x_adv.addcmul_(grad_sign, batch_view(step_size / grad_sign.flatten(1).norm(p=1, dim=1).add_(1e-10)))
+            x_adv.addcmul_(
+                grad_sign,
+                batch_view(
+                    step_size / grad_sign.flatten(1).norm(p=1, dim=1).add_(1e-10)
+                ),
+            )
             x_adv.sub_(inputs)
             delta_p = l1_projection(inputs, x_adv, eps)
             x_adv_1 = x_adv.add_(inputs).add_(delta_p)
@@ -290,7 +393,9 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
         grad.div_(eot_iter)
         x_adv.detach_(), loss_indiv.detach_()
 
-        is_adv = (logits.argmax(1) == labels) if targeted else (logits.argmax(1) != labels)
+        is_adv = (
+            (logits.argmax(1) == labels) if targeted else (logits.argmax(1) != labels)
+        )
         adv_found.logical_or_(is_adv)
         adv_found_steps[i + 1] = adv_found
         x_best_adv[is_adv] = x_adv[is_adv]
@@ -306,9 +411,13 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
         counter3 += 1
 
         if counter3 == k:
-            if norm in [2, float('inf')]:
-                fl_reduce_no_impr = (~reduced_last_check) & (loss_best_last_check >= loss_best)
-                reduced_last_check = check_oscillation(loss_steps, i, k, k3=rho) | fl_reduce_no_impr
+            if norm in [2, float("inf")]:
+                fl_reduce_no_impr = (~reduced_last_check) & (
+                    loss_best_last_check >= loss_best
+                )
+                reduced_last_check = (
+                    check_oscillation(loss_steps, i, k, k3=rho) | fl_reduce_no_impr
+                )
                 loss_best_last_check = loss_best
 
                 if reduced_last_check.any():
@@ -322,8 +431,12 @@ def _apgd(model: nn.Module, inputs: Tensor, labels: Tensor, eps: Tensor, norm: f
                 sp_curr = (x_best - inputs).flatten(1).norm(p=0, dim=1)
                 fl_redtopk = (sp_curr / sp_old) < 0.95
                 topk = sp_curr / n_fts / 1.5
-                step_size = torch.where(fl_redtopk, alpha * eps, step_size / adasp_redstep)
-                step_size = torch.min(torch.max(step_size, alpha * eps / adasp_minstep), alpha * eps)
+                step_size = torch.where(
+                    fl_redtopk, alpha * eps, step_size / adasp_redstep
+                )
+                step_size = torch.min(
+                    torch.max(step_size, alpha * eps / adasp_minstep), alpha * eps
+                )
                 sp_old = sp_curr
                 x_adv[fl_redtopk] = x_best[fl_redtopk]
                 grad[fl_redtopk] = grad_best[fl_redtopk]

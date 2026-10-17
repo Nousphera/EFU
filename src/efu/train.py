@@ -1,43 +1,21 @@
-# Modified 2026-10-15: standalone training integration; see THIRD_PARTY_LICENSES.
-"""Local federated training with decentralized coordinate-labelled FE.
-
-Each client encrypts its expanded model vector, sending one ciphertext per
-coordinate. See README.md for the protocol and experiment settings.
-"""
+"""Paper-grounded experiment configuration and local integration runner."""
 
 import argparse
-import copy
-import json
 import math
 from pathlib import Path
-import random
-import platform
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset, TensorDataset
+from torch.utils.data import DataLoader, Subset
 
 PROJECT = "EFU"
 
 
 class ImageModel(torch.nn.Module):
-    def __init__(self, name, classes, pretrained=False):
+    def __init__(self, name, classes, pretrained=False, model_root="models"):
         super().__init__()
-        import torchvision.models as models
+        from .model_io import load_backbone
 
-        if name == "resnet18":
-            self.body = models.resnet18(
-                weights=models.ResNet18_Weights.DEFAULT if pretrained else None
-            )
-            self.body.fc = torch.nn.Linear(self.body.fc.in_features, classes)
-        elif name == "vit_b_32":
-            self.body = models.vit_b_32(
-                weights=models.ViT_B_32_Weights.DEFAULT if pretrained else None
-            )
-            self.body.heads.head = torch.nn.Linear(
-                self.body.heads.head.in_features, classes
-            )
-        else:
-            raise ValueError("Model must be resnet18 or vit_b_32")
+        self.body = load_backbone(name, classes, root=model_root, pretrained=pretrained)
         self.input_mean = (0.485, 0.456, 0.406)
         self.input_std = (0.229, 0.224, 0.225)
         self.label2class = {i: i for i in range(classes)}
@@ -74,18 +52,6 @@ def partition(targets, clients, alpha, seed):
 
 
 def load_data(args):
-    if args.dataset == "synthetic":
-        generator = torch.Generator().manual_seed(args.seed)
-        x = torch.rand(args.clients * args.samples_per_client, 3, 224, 224, generator=generator)
-        y = x.mean(dim=(2, 3)).argmax(1).long()
-        train = TensorDataset(x, y)
-        test_x = torch.rand(4, 3, 224, 224, generator=generator)
-        test = TensorDataset(test_x, test_x.mean(dim=(2, 3)).argmax(1))
-        indices = [
-            list(range(i * args.samples_per_client, (i + 1) * args.samples_per_client))
-            for i in range(args.clients)
-        ]
-        return (train, test, indices, y.numpy(), 3)
     from torchvision import transforms
     from .dataset_io import load_prepared, prepare_dataset, labels
 
@@ -106,7 +72,7 @@ def load_data(args):
             )
         subsets = train.user_indices
     else:
-        subsets = partition(targets, args.clients, args.alpha, args.seed)
+        subsets = partition(targets, args.clients, args.alpha, args.partition_seed)
     return train, test, subsets, targets, classes
 
 
@@ -121,7 +87,7 @@ def loader(dataset, indices, args, shuffle=True):
 
 def fit(model, data, epochs, lr):
     model.train()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=0.01)
     for _ in range(epochs):
         for x, y in data:
             x, y = (x.to(model.device), y.to(model.device))
@@ -143,116 +109,122 @@ def evaluate(model, data):
             total += len(y)
             loss += float(torch.nn.functional.cross_entropy(logits, y, reduction="sum"))
     return (
-        {"accuracy": correct / total, "loss": loss / total}
+        {"accuracy": correct / total, "loss": loss / total, "samples": total}
         if total
-        else {"accuracy": None, "loss": None}
+        else {"accuracy": None, "loss": None, "samples": 0}
     )
 
 
-def select_participants(active, count, rng, required_client=None):
-    """Include the requesting client while its scheduled unlearning is active."""
-    if not 1 <= count <= len(active) or len(set(active)) != len(active):
-        raise ValueError("Invalid participant cohort")
-    if required_client is None:
-        return sorted(rng.choice(active, size=count, replace=False).tolist())
-    if required_client not in active:
-        raise ValueError("The unlearning requester must be an active client")
-    others = [cid for cid in active if cid != required_client]
-    return sorted(
-        [required_client, *rng.choice(others, size=count - 1, replace=False).tolist()]
+def build_parser():
+    p = argparse.ArgumentParser(
+        description="Paper-grounded EFU learning and unlearning"
     )
-
-
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--dataset",
-        choices=["synthetic", "cifar10", "cifar100", "imagefolder", "femnist", "lfw"],
-        default="synthetic",
+        choices=["cifar10", "cifar100", "imagefolder", "femnist", "lfw"],
+        default="cifar10",
     )
     p.add_argument(
         "--task",
         choices=["classification", "identity-gender"],
         default="classification",
-        help="identity-gender: system-wide LFW identity forgetting with retained supplied gender labels",
     )
-    p.add_argument("--model", choices=['resnet18', 'vit_b_32'], default="resnet18")
-    p.add_argument("--partition", choices=["dirichlet", "writer"], default="dirichlet")
+    p.add_argument("--model", choices=["resnet18", "vit_b_32"], default="resnet18")
+    p.add_argument("--model-root", default="models")
     p.add_argument(
-        "--pretrained",
-        action="store_true",
-        help="Allow torchvision pretrained weight download (EFU image models)",
+        "--from-scratch",
+        dest="pretrained",
+        action="store_false",
+        help="Explicit random-initialization ablation",
     )
-    p.add_argument("--clients", type=int, default=2)
-    p.add_argument("--rounds", type=int, default=2)
-    p.add_argument("--samples-per-client", type=int, default=8)
-    p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument(
+        "--pretrained", dest="pretrained", action="store_true", help=argparse.SUPPRESS
+    )
+    p.set_defaults(pretrained=True)
+    p.add_argument("--partition", choices=["dirichlet", "writer"], default="dirichlet")
+    p.add_argument("--clients", type=int, default=10)
+    p.add_argument("--rounds", type=int, default=100)
+    p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--local-epochs", type=int, default=1)
-    p.add_argument("--lr", type=float, default=0.01)
+    p.add_argument("--lr", type=float, default=0.001)
     p.add_argument("--alpha", type=float, default=0.1)
     p.add_argument("--participation", type=float, default=1.0)
-    p.add_argument("--kappa", type=int, default=4)
-    p.add_argument("--precision", type=int, default=2)
-    p.add_argument("--max-abs", type=float, default=8.0)
+    p.add_argument("--kappa", type=int, default=64)
+    p.add_argument("--precision", type=int, default=3)
+    p.add_argument("--max-abs", type=float, default=32.0)
     p.add_argument("--seed", type=int, default=2025)
+    p.add_argument(
+        "--partition-seed",
+        type=int,
+        default=2025,
+        help="Fixed data allocation independent of model/training seed",
+    )
+    p.add_argument("--request-seed", type=int, default=2026)
     p.add_argument("--device", default="cpu")
     p.add_argument("--data-root", default="data")
     p.add_argument("--download", action="store_true")
+    p.add_argument("--output", default=None)
     p.add_argument(
-        "--output",
-        default=None,
-        help="Write configuration, partition indices and measured metrics as JSON",
+        "--aggregation", choices=["encrypted", "plaintext"], default="encrypted"
     )
-    p.add_argument("--aggregation", choices=["encrypted", "plaintext"], default="encrypted",
-                   help="Plaintext isolates the unlearning objective for controls; provides no encryption")
     p.add_argument("--method", choices=["efu", "fedavg", "retrain"], default="efu")
     p.add_argument(
         "--unlearn-method", choices=["efu", "pgd", "sga_ewc", "fedosd"], default="efu"
     )
-    p.add_argument("--unlearn-start", type=int, default=2)
-    p.add_argument("--unlearn-rounds", type=int, default=1)
-    p.add_argument("--unlearn-epochs", type=int, default=1)
     p.add_argument(
-        "--forget-client",
+        "--variant",
+        choices=["efu", "baseline"],
+        default="efu",
+        help="EFU adds MAS to PGD/FedOSD; SGA-EWC uses Fisher only",
+    )
+    p.add_argument(
+        "--unlearn-start",
         type=int,
-        default=0,
-        help="Single-task classification requester; task-level requests use all clients",
+        default=51,
+        help="First unlearning round, one-based",
+    )
+    p.add_argument("--unlearn-rounds", type=int, default=10)
+    p.add_argument("--unlearn-epochs", type=int, default=5)
+    p.add_argument(
+        "--forget-client", type=int, default=0, help="Single-requester shorthand"
+    )
+    p.add_argument("--forget-clients", type=int, nargs="+", default=None)
+    p.add_argument("--forget-fraction", type=float, default=0.1)
+    p.add_argument(
+        "--forget-class", type=int, default=None, help="Single-class shorthand"
+    )
+    p.add_argument("--forget-classes", type=int, nargs="+", default=None)
+    p.add_argument("--forget-class-fraction", type=float, default=None)
+    p.add_argument(
+        "--request-participation", choices=["random", "required"], default="random"
+    )
+    p.add_argument("--attack-steps", type=int, default=100)
+    p.add_argument("--attack-eps", type=float, default=0.4)
+    p.add_argument("--mas-weight", type=float, default=1.0)
+    p.add_argument("--ewc-weight", type=float, default=1.0)
+    p.add_argument(
+        "--fisher-source",
+        choices=["forget", "retain"],
+        default="forget",
+        help="Declared empirical-Fisher data source",
     )
     p.add_argument(
-        "--forget-fraction",
+        "--pgd-radius",
         type=float,
-        default=0.25,
-        help="Single-task sample forgetting fraction",
+        default=3.0,
+        help="Explicit L2 trust radius; original random-model calibration is not inferred",
     )
-    p.add_argument("--forget-class", type=int, default=None)
-    p.add_argument("--attack-steps", type=int, default=2)
-    args = p.parse_args(argv)
-    if args.output:
-        destination = Path(args.output)
-        if destination.suffix != ".json":
-            p.error(
-                "--output must end in .json; a matching .pt checkpoint is saved beside it"
-            )
-        if destination.exists() or destination.with_suffix(".pt").exists():
-            raise FileExistsError(
-                f"Output already exists: {destination}; choose a new name"
-            )
+    return p
+
+
+def validate_args(args):
     if (
         args.clients < 2
-        or args.rounds < 1
-        or min(args.batch_size, args.local_epochs, args.samples_per_client, args.kappa)
-        < 1
-    ):
-        p.error("Positive sizes/rounds and at least two clients are required")
-    if (
-        not 0 < args.participation <= 1
-        or math.floor(args.clients * args.participation) < 2
-    ):
-        p.error("Participation must select at least two clients")
-    if (
-        not 0 <= args.forget_client < args.clients
-        or not 0 < args.forget_fraction < 1
         or min(
+            args.rounds,
+            args.batch_size,
+            args.local_epochs,
+            args.kappa,
             args.unlearn_start,
             args.unlearn_rounds,
             args.unlearn_epochs,
@@ -260,191 +232,96 @@ def main(argv=None):
         )
         < 1
     ):
-        p.error("Invalid forget-client or forget-fraction")
-    if args.task == "identity-gender":
-        if args.dataset not in ("lfw", "synthetic"):
-            p.error(
-                "identity-gender requires prepared LFW or explicit synthetic diagnostics"
-            )
-        if args.participation != 1.0:
-            p.error("The system-wide identity-gender request requires participation=1")
-        if args.unlearn_method != "efu" or args.forget_class is not None:
-            p.error(
-                "identity-gender implements EFU Eq. (3), not the single-task baseline or class-selection options"
-            )
-        from .task_unlearning import run_task
-
-        return run_task(args)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.set_num_threads(1)
-    train, test, partitions, targets, classes = load_data(args)
-    model = ImageModel(args.model, classes, args.pretrained).to(args.device)
-    test_loader = DataLoader(test, batch_size=args.batch_size, num_workers=0)
-    forget = []
-    prepared = {}
-    retain = copy.deepcopy(partitions)
-    original = partitions[args.forget_client]
-    forget = (
-        [i for i in original if targets[i] == args.forget_class]
-        if args.forget_class is not None
-        else original[: max(1, int(len(original) * args.forget_fraction))]
+        raise ValueError("Positive sizes/rounds and at least two clients are required")
+    if (
+        not 0 < args.participation <= 1
+        or math.floor(args.clients * args.participation) < 2
+    ):
+        raise ValueError("Participation must select at least two clients")
+    for name in ("lr", "alpha", "pgd_radius", "attack_eps", "max_abs"):
+        if not math.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if any(not math.isfinite(v) or v < 0 for v in (args.mas_weight, args.ewc_weight)):
+        raise ValueError("Regularizer weights must be finite and nonnegative")
+    if not 0 <= args.precision <= 6 or not 0 < args.forget_fraction <= 1:
+        raise ValueError("Invalid precision or forget fraction")
+    requesters = (
+        args.forget_clients if args.forget_clients is not None else [args.forget_client]
     )
-    if not forget:
-        p.error("The selected client has no samples to forget")
-    retain[args.forget_client] = [i for i in original if i not in set(forget)]
-    history = []
-    rng = np.random.default_rng(args.seed)
-    for round_id in range(1, args.rounds + 1):
-        retained_only = args.method == "retrain" or (
+    if (
+        not requesters
+        or len(set(requesters)) != len(requesters)
+        or any(not 0 <= cid < args.clients for cid in requesters)
+    ):
+        raise ValueError("Requesters must be unique valid client IDs")
+    if args.forget_classes is not None and args.forget_class is not None:
+        raise ValueError("Use forget-class or forget-classes, not both")
+    if args.forget_class_fraction is not None and (
+        not 0 < args.forget_class_fraction <= 1
+        or args.forget_classes is not None
+        or args.forget_class is not None
+    ):
+        raise ValueError(
+            "Choose explicit forgotten classes or a class fraction in (0,1]"
+        )
+    if (
+        args.method == "efu"
+        and args.unlearn_method == "fedosd"
+        and args.aggregation != "plaintext"
+    ):
+        raise ValueError(
+            "FedOSD requires plaintext cohort gradients; FE-wrapped FedOSD is unsupported"
+        )
+    if args.method == "efu" and args.unlearn_method == "pgd":
+        if args.unlearn_start < 2:
+            raise ValueError("PGD needs a preparation aggregation before unlearning")
+        if (
+            len(requesters) >= math.floor(args.clients * args.participation)
+            and args.task == "classification"
+        ):
+            raise ValueError(
+                "PGD needs a preparation cohort containing requesters and a retained participant"
+            )
+    if args.task == "identity-gender":
+        if args.dataset != "lfw" or args.participation != 1.0:
+            raise ValueError(
+                "identity-gender requires LFW annotations and full participation"
+            )
+        if (
+            args.forget_class is not None
+            or args.forget_classes is not None
+            or args.forget_class_fraction is not None
+        ):
+            raise ValueError(
+                "Task forgetting uses all identities; class selection is a different request"
+            )
+        if (
             args.method == "efu"
-            and round_id >= args.unlearn_start + args.unlearn_rounds
-        )
-        active = [i for i in range(args.clients) if not retained_only or retain[i]]
-        count = math.floor(len(active) * args.participation)
-        if count < 2:
-            raise ValueError("At least two active participants must remain")
-        request_active = (
-            args.method == "efu"
-            and args.unlearn_start
-            <= round_id
-            < args.unlearn_start + args.unlearn_rounds
-        )
-        selected = select_participants(
-            active, count, rng, args.forget_client if request_active else None
-        )
-        states = []
-        sizes = []
-        for cid in selected:
-            local = copy.deepcopy(model)
-            unlearning = (
-                args.method == "efu"
-                and cid == args.forget_client
-                and (
-                    args.unlearn_start
-                    <= round_id
-                    < args.unlearn_start + args.unlearn_rounds
-                )
+            and args.unlearn_method == "sga_ewc"
+            and args.fisher_source != "forget"
+        ):
+            raise ValueError(
+                "Task SGA-EWC estimates identity Fisher; select fisher-source=forget"
             )
-            if unlearning:
-                from efu.client import prepare_unlearning, local_unlearn
-
-                data = loader(train, forget, args)
-                if args.unlearn_method == "efu":
-                    if cid not in prepared:
-                        prepared[cid] = prepare_unlearning(
-                            local, data, attack_steps=args.attack_steps
-                        )
-                    local, _, _ = local_unlearn(
-                        local,
-                        data,
-                        num_epochs=args.unlearn_epochs,
-                        lr=args.lr,
-                        prepared=prepared[cid],
-                    )
-                else:
-                    from efu.utils.baselines import pgd_halimi, sga_ewc, fedosd
-
-                    local, _, _ = {
-                        "pgd": pgd_halimi,
-                        "sga_ewc": sga_ewc,
-                        "fedosd": fedosd,
-                    }[args.unlearn_method](
-                        local, data, num_epochs=args.unlearn_epochs, lr=args.lr
-                    )
-                sizes.append(len(partitions[cid]))
-            else:
-                use_retain = args.method == "retrain" or (
-                    args.method == "efu"
-                    and round_id >= args.unlearn_start + args.unlearn_rounds
-                )
-                indices = retain[cid] if use_retain else partitions[cid]
-                if not indices:
-                    raise ValueError(
-                        "An empty retained client cannot train; reduce participation/cohort explicitly"
-                    )
-                local = fit(
-                    local, loader(train, indices, args), args.local_epochs, args.lr
-                )
-                sizes.append(len(indices))
-            states.append(
-                {k: v.detach().cpu().clone() for k, v in local.state_dict().items()}
-            )
-        from efu.utils.fe import fe_secure_aggregate
-        from efu.aggregate import fedavg_aggr
-
-        updated = (
-            fe_secure_aggregate(
-                states,
-                sizes,
-                kappa=args.kappa,
-                precision=args.precision,
-                max_abs=args.max_abs,
-                seed=args.seed,
-            )
-            if args.method == "efu" and args.aggregation == "encrypted"
-            else fedavg_aggr(states, sizes, rnd=round_id)[0]
-        )
-        full = model.state_dict()
-        full.update(
-            {
-                k: torch.as_tensor(v, dtype=full[k].dtype, device=args.device)
-                for k, v in updated.items()
-            }
-        )
-        model.load_state_dict(full, strict=True)
-        metrics = {
-            "round": round_id,
-            "participants": selected,
-            "sample_counts": sizes,
-            "unlearning_client": args.forget_client if request_active else None,
-            **evaluate(model, test_loader),
-        }
-        if forget:
-            metrics["forget_train_accuracy"] = evaluate(
-                model, loader(train, forget, args, False)
-            )["accuracy"]
-        history.append(metrics)
-        print(json.dumps(metrics))
-    result = {
-        "project": "EFU",
-        "configuration": vars(args),
-        "partitions": partitions,
-        "forget_indices": forget,
-        "history": history,
-        "protocol": (
-            "decentralized-coordinate-fe"
-            if args.method == "efu" and args.aggregation == "encrypted"
-            else "plaintext-baseline"
-        ),
-        "benchmark_reproduction": False,
-    }
-    from .dataset_io import manifest_digest
-
-    result["data_manifest_sha256"] = manifest_digest(args.dataset, args.data_root)
-    result["environment"] = {
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "torch": str(torch.__version__),
-        "numpy": np.__version__,
-    }
     if args.output:
-        path = Path(args.output)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, indent=2) + "\n")
-        torch.save(
-            {
-                "model": {
-                    key: value.detach().cpu()
-                    for key, value in model.state_dict().items()
-                },
-                "configuration": vars(args),
-                "classes": classes,
-            },
-            path.with_suffix(".pt"),
-        )
-    return result
+        destination = Path(args.output)
+        if destination.suffix != ".json":
+            raise ValueError("--output must end in .json")
+        if destination.exists() or destination.with_suffix(".pt").exists():
+            raise FileExistsError(f"Output already exists: {destination}")
+    return args
+
+
+def main(argv=None):
+    parser = build_parser()
+    try:
+        args = validate_args(parser.parse_args(argv))
+    except ValueError as error:
+        parser.error(str(error))
+    from .experiment import Experiment
+
+    experiment = Experiment(args)
+    return experiment.run()
 
 
 def cli():
