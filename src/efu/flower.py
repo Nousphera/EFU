@@ -45,20 +45,35 @@ def _layout(state):
     return hashlib.sha256(_json(entries).encode()).hexdigest()
 
 
-def _save(context, value):
+def _encode_private(value):
     buffer = io.BytesIO()
     torch.save(value, buffer)
-    context.state["private"] = ConfigRecord({"state": buffer.getvalue()})
+    return ConfigRecord({"state": buffer.getvalue()})
 
 
-def _load(context):
-    if "private" not in context.state:
-        return {"cache": {}, "last_round": 0}
-    return torch.load(
-        io.BytesIO(context.state["private"]["state"]),
-        map_location="cpu",
-        weights_only=True,
-    )
+def _save(context, value):
+    # Training caches can contain full model references and per-parameter
+    # importance scores. Key exchanges update only the smaller protocol state.
+    protocol = {key: item for key, item in value.items() if key != "cache"}
+    protocol_record = _encode_private(protocol)
+    training_record = _encode_private(value["cache"]) if "cache" in value else None
+    context.state["private"] = protocol_record
+    if training_record is not None:
+        context.state["training"] = training_record
+
+
+def _load(context, *, include_cache=True):
+    def read(name):
+        return torch.load(
+            io.BytesIO(context.state[name]["state"]),
+            map_location="cpu",
+            weights_only=True,
+        )
+
+    protocol = read("private") if "private" in context.state else {"last_round": 0}
+    if include_cache:
+        protocol["cache"] = read("training") if "training" in context.state else {}
+    return protocol
 
 
 def _cluster(state, args):
@@ -173,7 +188,7 @@ def handle(message, context, experiment=None):
         )
     if config["cid"] != cid or type(rnd) != int or rnd < 1:
         raise ValueError("Client or round mismatch")
-    private = _load(context)
+    private = _load(context, include_cache=phase in ("prepare", "commit"))
     response = {}
     if phase == "prepare":
         if rnd <= private["last_round"]:

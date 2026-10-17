@@ -344,3 +344,55 @@ def test_chunked_authorization_keeps_state_until_complete(monkeypatch):
         assert private["last_round"] == args.rounds
         assert "participant" not in private
     assert all(not reply.content.array_records for _, reply in grid.wire)
+
+
+def test_authorization_does_not_reload_training_cache(monkeypatch):
+    args = arguments()
+    exp = FixtureExperiment(args)
+    grid = Grid(args)
+    original_load = torch.load
+    touched = []
+    original_exchange = grid.send_and_receive
+    active_phase = [None]
+
+    def exchange(messages, timeout=None):
+        messages = list(messages)
+        active_phase[0] = messages[0].content["config"]["phase"]
+        return original_exchange(messages, timeout)
+
+    def load(*a, **kw):
+        result = original_load(*a, **kw)
+        if active_phase[0] in ("authorize", "setup", "encrypt"):
+            if (isinstance(result, dict) and "cache" in result) or any(
+                "training" in c.state
+                and a[0].getvalue() == c.state["training"]["state"]
+                for c in grid.contexts.values()
+            ):
+                touched.append(active_phase[0])
+        return result
+
+    grid.send_and_receive = exchange
+    monkeypatch.setattr(torch, "load", load)
+    flower.run_server(grid, args, experiment=exp)
+    assert not touched, "Key exchanges must not deserialize the training cache"
+    assert all("cache" in flower._load(c) for c in grid.contexts.values())
+
+
+def test_cache_encoding_failure_does_not_advance_protocol(monkeypatch):
+    args = arguments()
+    context = Grid(args).contexts[10]
+    flower._save(context, {"cache": {"old": True}, "last_round": 0})
+    before = {key: record["state"] for key, record in context.state.items()}
+    original = flower._encode_private
+
+    def encode(value):
+        if value == {"new": True}:
+            raise RuntimeError("Cannot serialize training cache")
+        return original(value)
+
+    monkeypatch.setattr(flower, "_encode_private", encode)
+    with pytest.raises(RuntimeError, match="training cache"):
+        flower._save(
+            context, {"cache": {"new": True}, "last_round": 1, "phase": "committed"}
+        )
+    assert {key: record["state"] for key, record in context.state.items()} == before
